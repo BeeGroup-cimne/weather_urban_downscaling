@@ -1,0 +1,12 @@
+*.nc
+*.grib
+*.zarr
+*.npy
+data/raw/*
+data/processed/*
+data/static/*
+extracted_zarr_data/
+__pycache__/
+*.pyc
+.DS_Store
+*.csv

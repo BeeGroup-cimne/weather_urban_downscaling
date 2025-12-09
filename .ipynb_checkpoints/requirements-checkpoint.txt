@@ -1,0 +1,11 @@
+tensorflow>=2.15.0
+xarray
+numpy
+pandas
+matplotlib
+scipy
+cartopy
+cfgrib
+eccodes
+netCDF4
+zarr
