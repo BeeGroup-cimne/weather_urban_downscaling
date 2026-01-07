@@ -2,10 +2,12 @@ import os
 import platform
 import datetime
 import matplotlib.pyplot as plt
+import numpy as np
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger
 from config.config import Config
+from tensorflow.keras.utils import plot_model
 
 def notify_completion(message="Proceso finalizado"):
     timestamp = datetime.datetime.now().strftime("%H:%M:%S")
@@ -39,9 +41,8 @@ def plot_comparative_history(histories, save_dir):
     plt.savefig(filepath)
     print(f"📊 Gráfica guardada en: {filepath}")
 
-# ==========================================
+
 # 4. ENTRENAMIENTO Y VISUALIZACIÓN
-# ==========================================
 
 def run_experiment(model, train_ds, val_ds, experiment_name):
     """Ejecuta el ciclo de entrenamiento estandarizado"""
@@ -119,9 +120,27 @@ def visualize_results(model, val_ds, title):
         
         # Extraer un batch para visualizar
         (x_lr, x_st), y_true = next(iter(val_ds))
+
+        # --- 🛑 CORRECCIÓN DE RUTA STATS 🛑 ---
+        # 1. Intentamos la ruta estándar de tu proyecto
+        stats_path = os.path.join("scripts","stats_config.npz")
+        
+        # 2. Si no existe, probamos en la raíz (fallback)
+        if not os.path.exists(stats_path):
+            stats_path = "stats_config.npz"
+            
+        print(f"   📊 Cargando estadísticas desde: {stats_path}")
+        stats = np.load(stats_path)
+        # --------------------------------------
+
         
         # Predecir
+        mean_hr, std_hr = stats['mean_hr'], stats['std_hr']
+    
         y_pred = model.predict([x_lr, x_st], verbose=0)
+
+        y_pred_real = (y_pred * std_hr) + mean_hr
+        y_true_real = (y_true * std_hr) + mean_hr
 
         # Visualizar primer sample, último frame de la secuencia
         idx = 0
@@ -133,19 +152,19 @@ def visualize_results(model, val_ds, title):
         # 1. Input LR
         plt.subplot(1, 3, 1)
         # x_lr shape: (Batch, Time, Lat, Lon, Chan)
-        plt.imshow(x_lr[idx, t, :, :, 0], cmap='viridis') 
+        plt.imshow(x_lr[idx, t, :, :, 0], cmap='viridis',origin='lower') 
         plt.title("Input Low Res (LR)")
         plt.axis('off')
 
         # 2. Predicción HR
         plt.subplot(1, 3, 2)
-        plt.imshow(y_pred[idx, t, :, :, 0], cmap='viridis')
+        plt.imshow(y_pred_real[idx, t, :, :, 0], cmap='viridis',origin='lower')
         plt.title("Prediction (HR)")
         plt.axis('off')
 
         # 3. Ground Truth HR
         plt.subplot(1, 3, 3)
-        plt.imshow(y_true[idx, t, :, :, 0], cmap='viridis')
+        plt.imshow(y_true_real[idx, t, :, :, 0], cmap='viridis',origin='lower')
         plt.title("Ground Truth (HR)")
         plt.axis('off')
         

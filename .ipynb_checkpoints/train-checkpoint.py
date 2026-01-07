@@ -9,10 +9,22 @@ from src.utils import notify_completion, plot_comparative_history , run_experime
 
 tf.random.set_seed(Config.SEED)
 
-# ==========================================
+def combined_loss(y_true, y_pred):
+    # 1. Error de Valores (MSE) - Para precisión numérica
+    mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred)
+    
+    # 2. Error de Estructura (SSIM) - Para nitidez visual
+    ssim_loss = 1 - tf.reduce_mean(tf.image.ssim(y_true, y_pred, max_val=5.0))
+    
+    # 3. Combinación (Ajusta el peso alfa)
+    alpha = 0.8
+    return (1 - alpha) * mse + alpha * ssim_loss
+
+
 # MAIN EXECUTION
-# ==========================================
+
 if __name__ == "__main__":
+    
     # Limpiar sesiones anteriores para liberar memoria
     tf.keras.backend.clear_session()
     
@@ -41,9 +53,10 @@ if __name__ == "__main__":
     # 5. Definir Modelos a Probar
     experiments = [
         #("UNet", ModelZoo.build_unet),
-         #s("ConvLSTM", ModelZoo.build_convlstm), # Descomentar para probar otros
-        ("Transformer", ModelZoo.build_transformer)
+        ("ConvLSTM", ModelZoo.build_convlstm), # Descomentar para probar otros
+        #("Transformer", ModelZoo.build_transformer),
         #("Hybrid_UNet_LSTM", ModelZoo.build_hybrid_unet_lstm),
+        #("UNet_Mamba", ModelZoo.build_hybrid_unet_mamba)
     ]
 
     histories = {}
@@ -56,7 +69,22 @@ if __name__ == "__main__":
         if name != experiments[0][0]:
             tf.keras.backend.clear_session()
             
-        model = builder()
+        model = builder(
+            lr_shape=Config.LR_SHAPE, 
+            hr_shape=Config.HR_SHAPE
+        )
+
+        # ---------------------------------------------------------
+        # AQUÍ es donde "inyectamos" la nueva Loss Function al modelo
+        print(f"⚙️ Compilando {name} con Loss Híbrida (MSE + SSIM)...")
+        
+        model.compile(
+            # Usamos la versión Legacy que está optimizada para Mac Silicon (M1/M2/M3/M4)
+optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=Config.LEARNING_RATE),
+            loss=combined_loss,      # <--- 
+            metrics=['mae', 'mse']   # Mantenemos MAE/MSE solo para monitorizar en logs
+        )
+        # ---------------------------------------------------------
         
         # Opcional: Imprimir resumen
         # model.summary() 

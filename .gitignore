@@ -10,3 +10,9 @@ __pycache__/
 *.pyc
 .DS_Store
 *.csv
+# Ignorar Big Data y Modelos pesados
+*.geojson
+*.h5
+*.keras
+experiments/models/
+src/utils/barcelona_infalible.geojson

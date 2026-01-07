@@ -5,7 +5,8 @@ from scipy.spatial import cKDTree
 from pyproj import Transformer
 import os
 
-# ================= CONFIGURACIÓN =================
+# CONFIGURACIÓN
+
 PATH_STATIONS = '/Users/kerincardona/weather_urbclim_200801-201712.zarr'
 PATH_GRID_REF = "/Users/kerincardona/Documents/weather_urban_downscaling/urbclim/tas_Barcelona_UrbClim_2008_03_v1.0.nc"
 OUTPUT_FILE = "estaciones_interpoladas_final.nc"

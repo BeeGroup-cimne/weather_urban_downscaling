@@ -5,13 +5,87 @@ from tensorflow.keras.layers import (
     Activation, Add, LeakyReLU, Resizing, Dropout, 
     MultiHeadAttention, Lambda, Permute, Dense, LayerNormalization
 )
+from tensorflow.keras import layers
 from tensorflow.keras.models import Model
 from config.config import Config
 
+# --- CLASE AUXILIAR: MAMBA BLOCK (Pure TF) ---
 
-# ==========================================
-# 3. MODELOS (Arquitecturas)
-# ==========================================
+class SimpleMambaBlock(layers.Layer):
+    """
+    Implementación robusta de Mamba Block para Apple Silicon (M1/M2/M3/M4).
+    Sustituye Conv1D (buggy en Metal) por DepthwiseConv2D (estable).
+    """
+    def __init__(self, model_dim, d_state=16, d_conv=4, expand=2, **kwargs):
+        super().__init__(**kwargs)
+        self.model_dim = model_dim
+        self.d_inner = int(expand * model_dim)
+        self.d_conv = d_conv
+        self.d_state = d_state
+
+        # Proyecciones de entrada
+        self.in_proj = layers.Dense(self.d_inner * 2, use_bias=False)
+        
+        # --- 🛡️ FIX MAC SILICON 🛡️ ---
+        # Usamos DepthwiseConv2D en lugar de Conv1D.
+        # Esto evita el error "could not find registered platform" en Metal.
+        self.dw_conv2d = layers.DepthwiseConv2D(
+            kernel_size=(d_conv, 1), # Convolución sobre el eje de Tiempo (d_conv) x 1
+            padding='same',          # 'same' mantiene la dimensión temporal estable
+            depth_multiplier=1,
+            data_format='channels_last'
+        )
+        # -----------------------------
+        
+        # Activación y Gating
+        self.activation = layers.Activation('swish') 
+        self.out_proj = layers.Dense(model_dim, use_bias=False)
+        self.norm = layers.LayerNormalization(epsilon=1e-5)
+
+    def call(self, x):
+        # x shape: (Batch, Seq_Len, Channels)
+        skip = x
+        x = self.norm(x)
+        
+        # 1. Proyección y Split
+        projected = self.in_proj(x)
+        x_branch, z_branch = tf.split(projected, num_or_size_splits=2, axis=-1)
+        
+        # 2. Procesamiento Rama X (Simulando 1D con 2D)
+        
+        # --- 🔄 TRUCO DE RESHAPE 🔄 ---
+        # Añadimos una dimensión falsa para que parezca una imagen 2D de ancho 1
+        # Shape entra: (Batch, Time, Chan) -> Sale: (Batch, Time, 1, Chan)
+        x_branch = tf.expand_dims(x_branch, axis=2)
+        
+        # Aplicamos la Convolución Robusta (GPU Friendly)
+        x_branch = self.dw_conv2d(x_branch)
+        
+        # Quitamos la dimensión falsa
+        # Shape entra: (Batch, Time, 1, Chan) -> Sale: (Batch, Time, Chan)
+        x_branch = tf.squeeze(x_branch, axis=2)
+        # ------------------------------
+        
+        x_branch = self.activation(x_branch)
+        
+        # 3. Gating
+        z_branch = self.activation(z_branch)
+        x_out = x_branch * z_branch
+        
+        # 4. Proyección de salida
+        return self.out_proj(x_out) + skip
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "model_dim": self.model_dim,
+            "d_state": self.d_state,
+            "d_conv": self.d_conv
+        })
+        return config
+        
+# MODELOS (Arquitecturas)
+
 class ModelZoo:
     @staticmethod
     def get_optimizer(lr):
@@ -75,36 +149,53 @@ class ModelZoo:
         out_restored = Lambda(restore_spatial)([out2, x_input])
         return Permute((3, 1, 2, 4))(out_restored)
 
-    @classmethod
-    def build_convlstm(cls):
-        """Experimento 1: ConvLSTM + Upsampling"""
-        inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, 9))
-        inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, 18))
 
-        x = ConvLSTM2D(64, (3, 3), padding="same", return_sequences=True)(inp_dyn)
+    @staticmethod
+    def build_convlstm(lr_shape=(5, 9), hr_shape=(251, 251)):
+        """
+        ConvLSTM: Versión Optimizada.
+        CAMBIO: Usamos LayerNormalization en lugar de BatchNormalization.
+        - Más rápido (sin TimeDistributed).
+        - Nativo para 5D (sin errores de dimensión).
+        - Mejor convergencia para LSTMs.
+        """
+        from config.config import Config
+        
+        # 1. Inputs
+        lr_input = Input(shape=(Config.SEQ_LEN, lr_shape[0], lr_shape[1], Config.CHANNELS), name="lr_input")
+        static_input = Input(shape=(Config.SEQ_LEN, hr_shape[0], hr_shape[1], Config.STATIC_CHANNELS), name="static_input")
 
-        # Upsampling progresivo
-        for _ in range(6):
-            x = TimeDistributed(UpSampling2D((2, 2), interpolation='bilinear'))(x)
-            x = TimeDistributed(Conv2D(64, (3, 3), padding="same"))(x)
-            x = TimeDistributed(LeakyReLU(0.2))(x)
+        # 2. Upsampling
+        scale_h = hr_shape[0] // lr_shape[0]
+        scale_w = hr_shape[1] // lr_shape[1]
+        
+        x_lr_up = layers.TimeDistributed(
+            layers.UpSampling2D(size=(scale_h, scale_w), interpolation='bilinear')
+        )(lr_input)
+        x_lr_up = layers.TimeDistributed(layers.Resizing(hr_shape[0], hr_shape[1]))(x_lr_up)
 
-        x = TimeDistributed(Resizing(*Config.HR_SHAPE))(x)
-        merged = Concatenate()([x, inp_st])
+        # 3. Fusión
+        x = layers.Concatenate(axis=-1)([x_lr_up, static_input])
 
-        x = TimeDistributed(Conv2D(64, (3, 3), padding="same"))(merged)
-        x = cls.res_block(x, 64)
-        out = TimeDistributed(Conv2D(1, (1, 1), activation="linear"))(x)
+        # 4. Procesamiento ConvLSTM
+        # Block 1
+        x = layers.ConvLSTM2D(64, (3, 3), padding='same', return_sequences=True, activation='tanh')(x)
+        x = layers.LayerNormalization(axis=-1)(x) # <-- Rápido y soporta 5D
+        
+        # Block 2
+        x = layers.ConvLSTM2D(64, (3, 3), padding='same', return_sequences=True, activation='tanh')(x)
+        x = layers.LayerNormalization(axis=-1)(x) # <-- Rápido y soporta 5D
+        
+        # 5. Salida
+        output = layers.TimeDistributed(layers.Conv2D(1, (1, 1), activation='linear'))(x)
 
-        model = Model([inp_dyn, inp_st], out, name="Exp1_ConvLSTM")
-        model.compile(optimizer=cls.get_optimizer(Config.LEARNING_RATE), loss='mse', metrics=['mae'])
-        return model
+        return Model(inputs=[lr_input, static_input], outputs=output, name="ConvLSTM")
 
     @classmethod
     def build_unet(cls):
         """Experimento 2: U-Net Standard"""
         inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, 9))
-        inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, 18))
+        inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, Config.STATIC_CHANNELS))
 
         # Bridge
         x_up = TimeDistributed(Resizing(*Config.HR_SHAPE, interpolation="bilinear"))(inp_dyn)
@@ -153,7 +244,7 @@ class ModelZoo:
         # Inputs Dinámicos (LR) y Estáticos (HR)
         # Nota: Usamos '9' canales o 'None' si queremos flexibilidad total
         inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, 9)) 
-        inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, 18))
+        inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, Config.STATIC_CHANNELS))
 
         # --- 1. BRIDGE & FUSION ---
         # Escalamos la entrada LR al tamaño HR para concatenarla con los datos estáticos
@@ -219,7 +310,7 @@ class ModelZoo:
     def build_transformer(cls):
         """Experimento 3: U-Net con Transformer Bottleneck"""
         inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, 9))
-        inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, 18))
+        inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, Config.STATIC_CHANNELS))
 
         # Bridge & Encoder (Igual a U-Net)
         x_up = TimeDistributed(Resizing(*Config.HR_SHAPE, interpolation="bilinear"))(inp_dyn)
@@ -254,4 +345,98 @@ class ModelZoo:
         model = Model([inp_dyn, inp_st], out, name="Exp3_TransformerUNet")
         model.compile(optimizer=cls.get_optimizer(Config.LEARNING_RATE), loss='mse', metrics=['mae'])
         return model
+
+    @staticmethod
+    def build_hybrid_unet_mamba(lr_shape=(5, 9), hr_shape=(251, 251)):
+        """
+        Arquitectura Híbrida:
+        - Encoder: Conv2D (Extrae features espaciales)
+        - Bottleneck: Mamba Block (Mezcla contexto global temporal-espacial)
+        - Decoder: Conv2DTranspose (Reconstruye detalles)
+        """
+        from config.config import Config # Import local para evitar ciclos
+        
+        # 1. Inputs
+        # LR Input: (Batch, Time, H_lr, W_lr, C_lr)
+        lr_input = Input(shape=(Config.SEQ_LEN, lr_shape[0], lr_shape[1], Config.CHANNELS), name="lr_input")
+        # Static Input: (Batch, Time, H_hr, W_hr, C_st)
+        static_input = Input(shape=(Config.SEQ_LEN, hr_shape[0], hr_shape[1], Config.STATIC_CHANNELS), name="static_input")
+
+        # 2. Pre-Procesado (Early Upsampling de LR)
+        # Escalamos la imagen pequeña (5x9) al tamaño grande (251x251) para concatenar
+        x_lr_up = layers.TimeDistributed(
+            layers.UpSampling2D(size=(hr_shape[0] // lr_shape[0], hr_shape[1] // lr_shape[1]), interpolation='bilinear')
+        )(lr_input)
+        
+        # Ajuste fino de tamaño si la división no fue exacta
+        x_lr_up = layers.TimeDistributed(layers.Resizing(hr_shape[0], hr_shape[1]))(x_lr_up)
+
+        # 3. Concatenación (Early Fusion)
+        x = layers.Concatenate(axis=-1)([x_lr_up, static_input])
+
+        # --- ENCODER (TimeDistributed Conv2D) ---
+        # Extraemos características frame a frame
+        skips = []
+        
+        # Block 1
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu'))(x)
+        skips.append(x)
+        x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x) # -> 125x125
+
+        # Block 2
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu'))(x)
+        skips.append(x)
+        x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x) # -> 62x62
+
+        # Block 3
+        x = layers.TimeDistributed(layers.Conv2D(128, (3, 3), padding='same', activation='relu'))(x)
+        skips.append(x)
+        x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x) # -> 31x31
+
+        # --- MAMBA BOTTLENECK (The Core) ---
+        # Aquí ocurre la magia. Aplanamos Espacio y Tiempo para que Mamba los mezcle.
+        
+        # Shape actual: (Batch, Time, H', W', C)
+        b_shape = tf.shape(x)
+        h_enc, w_enc, c_enc = x.shape[2], x.shape[3], x.shape[4]
+        
+        # Aplanamos: (Batch, Sequence_Long, Channels)
+        # Sequence_Long = Time * H * W. Mamba verá todo el video como una tira larga.
+        x_flat = layers.Reshape((-1, c_enc))(x) 
+        
+        # Aplicamos Bloques Mamba
+        # Esto permite que un píxel en t=0 influya en un píxel en t=2 muy lejos espacialmente
+        x_mamba = SimpleMambaBlock(model_dim=c_enc, expand=2)(x_flat)
+        x_mamba = SimpleMambaBlock(model_dim=c_enc, expand=2)(x_mamba)
+        
+        # Des-aplanamos al formato espacial
+        x = layers.Reshape((Config.SEQ_LEN, h_enc, w_enc, c_enc))(x_mamba)
+
+        # --- DECODER (Reconstrucción) ---
+        
+        # Up 3
+        x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
+        x = layers.TimeDistributed(layers.Conv2D(128, (3, 3), padding='same', activation='relu'))(x)
+        # Ajuste de shape por si el pooling fue impar
+        x = layers.TimeDistributed(layers.Resizing(skips[2].shape[2], skips[2].shape[3]))(x)
+        x = layers.Concatenate()([x, skips[2]])
+        
+        # Up 2
+        x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Resizing(skips[1].shape[2], skips[1].shape[3]))(x)
+        x = layers.Concatenate()([x, skips[1]])
+        
+        # Up 1
+        x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Resizing(skips[0].shape[2], skips[0].shape[3]))(x)
+        x = layers.Concatenate()([x, skips[0]])
+
+        # Salida Final
+        output = layers.TimeDistributed(layers.Conv2D(1, (1, 1), activation='linear'))(x)
+
+        return Model(inputs=[lr_input, static_input], outputs=output, name="Hybrid_UNet_Mamba")    
         

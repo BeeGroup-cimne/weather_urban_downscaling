@@ -1,6 +1,6 @@
-# ==========================================
-# 2. MOTOR DE DATOS BIG DATA (Scalable Pipeline)
-# ==========================================
+
+# MOTOR DE DATOS BIG DATA (Scalable Pipeline)
+
 import xarray as xr
 import numpy as np
 import glob
@@ -11,6 +11,7 @@ from dask.diagnostics import ProgressBar
 from scipy.interpolate import NearestNDInterpolator
 import os
 import tensorflow as tf
+from config.config import Config
 
 
 class BigDataPipeline:
@@ -36,6 +37,17 @@ class BigDataPipeline:
         """
         print("🗺️ Processing Static Data...")
         
+        # Definimos ruta del caché estático
+        static_cache_path = "./processed_cache_zarr/static_processed.npy"
+
+        if os.path.exists(static_cache_path):
+            print("🗺️ Cargando datos estáticos desde caché (.npy)...")
+            self.ds_static_single = np.load(static_cache_path)
+            print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
+            return
+
+        print("🗺️ Procesando e Interpolando datos estáticos (Esto se hará solo una vez)...")
+        
         # 1. Abrimos el dataset HR para leer dimensiones y grilla
         # Usamos open_dataset normal para asegurar acceso a todas las variables
         ds_hr = xr.open_dataset(self.cfg.PATH_HR)
@@ -52,7 +64,7 @@ class BigDataPipeline:
             # Fallback por si acaso
             dim_y, dim_x = ds_hr.shape[-2], ds_hr.shape[-1]
             
-        print(f"   📏 Dimensiones detectadas HR: {dim_y}x{dim_x}")
+        print(f" 📏 Dimensiones detectadas HR: {dim_y}x{dim_x}")
 
         # --- GRID PARA INTERPOLACIÓN ---
         # Necesitamos los valores reales de latitud/longitud de cada pixel para saber dónde interpolar
@@ -84,6 +96,13 @@ class BigDataPipeline:
         self.ds_static_single = np.stack(static_layers, axis=-1).astype('float32')
         print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
 
+        print(f"💾 Guardando caché estático en {static_cache_path}...")
+        # Aseguramos que la carpeta exista
+        os.makedirs(os.path.dirname(static_cache_path), exist_ok=True)
+        np.save(static_cache_path, self.ds_static_single)
+        
+        print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
+
     def compute_global_stats(self, ds_hr_lazy, ds_lr_lazy):
         """Calcula estadísticas globales usando Dask (Sin RAM excesiva)"""
         if os.path.exists(self.stats_path):
@@ -104,13 +123,16 @@ class BigDataPipeline:
 
     def run_etl_process(self):
         """
-        Fase 1: Transforma RAW -> ZARR (Soporte Multi-Canal + Auto-Detect HR).
+        Fase 1: Transforma RAW -> ZARR (Soporte Multi-Canal + Interpolación 'Nearest' Marítima).
         """
         if os.path.exists(self.cache_dir):
             print(f"⚡ Cache Zarr detectado. (IMPORTANTE: BORRA {self.cache_dir} si cambiaste datos).")
             try:
                 ds_zarr = xr.open_zarr(self.cache_dir)
-                self.cfg.LR_SHAPE = (ds_zarr.dims['latitude'], ds_zarr.dims['longitude'])
+                # Intentamos leer dimensiones estándar, fallback a nombres detectados
+                lat_dim = next((d for d in ds_zarr.dims if d in ['latitude', 'lat', 'y']), 'latitude')
+                lon_dim = next((d for d in ds_zarr.dims if d in ['longitude', 'lon', 'x']), 'longitude')
+                self.cfg.LR_SHAPE = (ds_zarr.dims[lat_dim], ds_zarr.dims[lon_dim])
                 return
             except:
                 shutil.rmtree(self.cache_dir)
@@ -128,7 +150,6 @@ class BigDataPipeline:
         )
 
         # 2. Detección Inteligente de Variable HR (Target)
-        # Buscamos 'tas', 't2m' o 'airTemperature'
         hr_var = None
         for v in ['tas', 't2m', 'airTemperature', 'temp']:
             if v in ds_hr:
@@ -136,7 +157,6 @@ class BigDataPipeline:
                 break
         
         if hr_var is None:
-            # Fallback: Usar la primera variable de datos que encuentre
             vars_list = list(ds_hr.data_vars)
             if vars_list:
                 hr_var = vars_list[0]
@@ -146,8 +166,7 @@ class BigDataPipeline:
 
         print(f"   🎯 Target HR detectado: '{hr_var}'")
 
-        # 3. Conversión de Unidades Automática (Kelvin/Celsius)
-        # Calculamos la media del primer chunk para saber si es K o C
+        # 3. Conversión de Unidades Automática
         sample_mean = ds_hr[hr_var].isel(time=slice(0, 10)).mean().compute().item()
         
         if sample_mean > 200:
@@ -157,10 +176,9 @@ class BigDataPipeline:
             print(f"   🌡️ Unidades detectadas: Celsius (Media ~{sample_mean:.0f}). Manteniendo valores.")
             ds_hr["tas_C"] = ds_hr[hr_var]
 
-        # Conversiones LR (ERA5 siempre viene en Kelvin si es GRIB)
-        if 't2m' in ds_lr: ds_lr["t2m"] = ds_lr["t2m"] - 273.15
-        if 'd2m' in ds_lr: ds_lr["d2m"] = ds_lr["d2m"] - 273.15
-        if 'skt' in ds_lr: ds_lr["skt"] = ds_lr["skt"] - 273.15
+        # Conversiones LR
+        for var in ['t2m', 'd2m', 'skt']:
+            if var in ds_lr: ds_lr[var] = ds_lr[var] - 273.15
 
         # 4. Fix Temporal (Time/Step stack)
         if 'step' in ds_lr.coords:
@@ -195,20 +213,32 @@ class BigDataPipeline:
         min_lon = ds_hr[hr_lon_coord].min().compute().item()
         max_lon = ds_hr[hr_lon_coord].max().compute().item()
         
-        buffer = 0.15
+        buffer = 0.15 # Buffer pequeño para asegurar cobertura
         ds_lr_clipped = ds_lr.sel(
             latitude=slice(max_lat + buffer, min_lat - buffer), 
             longitude=slice(min_lon - buffer, max_lon + buffer)
         ).sortby('latitude', ascending=False).sortby('longitude', ascending=True)
 
         print("   📦 Empaquetando variables LR...")
+        # to_array crea dims: (variable, time, latitude, longitude)
         ds_lr_arr = ds_lr_clipped.to_array(dim='variable', name='lr_input')
         
-        print("   🌊 Rellenando NaNs (Spatial Fill)...")
-        ds_lr_clean = ds_lr_arr.ffill(dim='longitude').bfill(dim='longitude') \
-                               .ffill(dim='latitude').bfill(dim='latitude')
+        # --- 🛠️ FIX DE INTERPOLACIÓN MARÍTIMA 🛠️ ---
+        print("   🌊 Rellenando NaNs (Estrategia Nearest/Extrapolate)...")
+        # Usamos interpolate_na con 'nearest' y extrapolación.
+        # Esto rellena el mar con el valor del píxel costero más cercano (escalón plano),
+        # evitando gradientes falsos.
         
-        # HR Clean (Usando dims correctas)
+        # 1. Relleno Longitudinal (Este-Oeste)
+        ds_lr_clean = ds_lr_arr.interpolate_na(dim='longitude', method='nearest', fill_value="extrapolate")
+        # 2. Relleno Latitudinal (Norte-Sur) - Para esquinas rebeldes
+        ds_lr_clean = ds_lr_clean.interpolate_na(dim='latitude', method='nearest', fill_value="extrapolate")
+        
+        # 3. Fallback Temporal (Por si queda algún hueco raro)
+        ds_lr_clean = ds_lr_clean.ffill(dim='time').bfill(dim='time')
+        # -----------------------------------------------
+        
+        # HR Clean
         hr_lat_dim = 'latitude' if 'latitude' in ds_hr.dims else 'y'
         hr_lon_dim = 'longitude' if 'longitude' in ds_hr.dims else 'x'
         ds_hr_clean = ds_hr["tas_C"].ffill(dim=hr_lon_dim).bfill(dim=hr_lon_dim) \
@@ -217,6 +247,7 @@ class BigDataPipeline:
         # 7. Stats Vectoriales
         print("   🧮 Calculando estadísticas...")
         with ProgressBar():
+            # Especificamos dims explícitas para asegurar promedio correcto
             mean_lr = ds_lr_clean.mean(dim=['time', 'latitude', 'longitude']).compute()
             std_lr = ds_lr_clean.std(dim=['time', 'latitude', 'longitude']).compute()
             mean_hr = ds_hr_clean.mean().compute().item()
@@ -225,8 +256,19 @@ class BigDataPipeline:
         ds_lr_norm = (ds_lr_clean - mean_lr) / (std_lr + 1e-6)
         ds_hr_norm = (ds_hr_clean - mean_hr) / (std_hr + 1e-6)
         
+        # --- 🔄 FIX ROTACIÓN: TRANSPOSICIÓN ANTES DE GUARDAR 🔄 ---
+        # Aseguramos el orden canónico para Tensorflow: (Time, Lat, Lon, Variable)
+        # to_array pone variable primero, así que lo movemos al final.
+        print("   🔄 Transponiendo a (Time, Lat, Lon, Variable)...")
+        ds_lr_norm = ds_lr_norm.transpose('time', 'latitude', 'longitude', 'variable')
+        
+        # Para HR: (Time, Lat, Lon)
+        ds_hr_norm = ds_hr_norm.transpose('time', hr_lat_dim, hr_lon_dim)
+
         # 8. Guardar
         ds_final = xr.Dataset({"hr_target": ds_hr_norm, "lr_input": ds_lr_norm})
+        
+        # Actualizamos la config con las dimensiones reales lat/lon
         self.cfg.LR_SHAPE = (ds_lr_clipped.sizes['latitude'], ds_lr_clipped.sizes['longitude'])
         
         if os.path.exists(self.cache_dir): shutil.rmtree(self.cache_dir)
@@ -239,42 +281,91 @@ class BigDataPipeline:
         print("✅ ETL Finalizado.")
         
     def get_tf_datasets(self):
-        """Generadores Multi-Canal (Soporta N variables dinámicamente)"""
+        """Generadores Multi-Canal (Corrige conflicto de nombres Lat/Lon vs Y/X)"""
         print("🔌 Conectando generadores a Zarr...")
         ds = xr.open_zarr(self.cache_dir, consolidated=True)
+
+        # --- 🛠️ 1. DETECCIÓN INDEPENDIENTE DE DIMENSIONES 🛠️ ---
         
-        # Estáticos
-        mean_st = self.ds_static_single.mean(axis=(0, 1), keepdims=True)
-        std_st = self.ds_static_single.std(axis=(0, 1), keepdims=True)
-        static_norm = (self.ds_static_single - mean_st) / (std_st + 1e-6)
+        # A) Analizar Input de Baja Resolución (LR)
+        # Buscamos qué nombres usa Específicamente la variable 'lr_input'
+        da_lr = ds['lr_input']
+        lr_dims_list = list(da_lr.dims)
+        lr_lat = next((d for d in lr_dims_list if d in ['latitude', 'lat', 'y']), 'y')
+        lr_lon = next((d for d in lr_dims_list if d in ['longitude', 'lon', 'x']), 'x')
+        
+        # Tamaño REAL del input (debe ser pequeño, ej: 5x9)
+        real_lr_h = da_lr.sizes[lr_lat]
+        real_lr_w = da_lr.sizes[lr_lon]
+        
+        print(f"   📐 Input LR detectado: {lr_lat}={real_lr_h}, {lr_lon}={real_lr_w}")
+
+        # B) Analizar Target de Alta Resolución (HR)
+        # Buscamos nombres para 'hr_target'
+        da_hr = ds['hr_target']
+        hr_dims_list = list(da_hr.dims)
+        hr_y = next((d for d in hr_dims_list if d in ['y', 'latitude', 'lat']), 'y')
+        hr_x = next((d for d in hr_dims_list if d in ['x', 'longitude', 'lon']), 'x')
+
+        # --- 🛑 2. ACTUALIZACIÓN DE CONFIGURACIÓN 🛑 ---
+        # Ahora actualizamos Config usando las dimensiones del LR, no las del HR
+        if self.cfg.LR_SHAPE != (real_lr_h, real_lr_w):
+            print(f"   ⚠️ CORRECCIÓN DE SHAPE: Config decía {self.cfg.LR_SHAPE}, pero LR real es ({real_lr_h}, {real_lr_w}).")
+            print(f"   🔧 Actualizando Config.LR_SHAPE a ({real_lr_h}, {real_lr_w}).")
+            self.cfg.LR_SHAPE = (real_lr_h, real_lr_w)
+        # ---------------------------------------------------------
+
+        # 3. Preparar Estáticos (Normalización)
+        # Aseguramos que static sea numpy para evitar líos de dims
+        if isinstance(self.ds_static_single, (xr.DataArray, xr.Dataset)):
+            static_data = self.ds_static_single.values
+        else:
+            static_data = self.ds_static_single
+
+        # Asegurar forma (H, W, Chan)
+        if static_data.ndim == 2:
+             static_data = static_data[..., np.newaxis]
+             
+        mean_st = np.mean(static_data, axis=(0, 1), keepdims=True)
+        std_st = np.std(static_data, axis=(0, 1), keepdims=True)
+        static_norm = (static_data - mean_st) / (std_st + 1e-6)
         
         total_len = ds.sizes['time']
         split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
         
-        # Detectar número real de canales en el archivo procesado
-        n_channels = ds.sizes['variable'] if 'variable' in ds.sizes else 1
+        # Detectar canales LR
+        if 'variable' in da_lr.sizes:
+            n_channels = da_lr.sizes['variable']
+        elif 'channel' in da_lr.sizes:
+            n_channels = da_lr.sizes['channel']
+        else:
+            n_channels = 1
+            
         print(f"   ℹ️ Input Channels Detectados: {n_channels}")
 
         def generator(start_i, end_i):
             seq_len = self.cfg.SEQ_LEN
-            lat_dim = 'latitude' if 'latitude' in ds.dims else 'y'
-            lon_dim = 'longitude' if 'longitude' in ds.dims else 'x'
             
             for i in range(start_i, end_i - seq_len):
-                # 1. LR INPUT (Multi-Channel)
-                # Zarr shape: (variable, time, lat, lon) o similar
-                # Transpose Target: (time, lat, lon, variable) -> Formato TF
-                x_lr = ds['lr_input'].isel(time=slice(i, i+seq_len)) \
-                                     .transpose('time', lat_dim, lon_dim, 'variable') \
-                                     .values
+                # 1. LR INPUT
+                # Usamos los nombres detectados para LR (lr_lat, lr_lon)
+                # Transpose: (Time, Alto, Ancho, Var)
+                if 'variable' in da_lr.dims:
+                     x_lr = da_lr.isel(time=slice(i, i+seq_len)) \
+                                 .transpose('time', lr_lat, lr_lon, 'variable') \
+                                 .values
+                else:
+                     x_lr = da_lr.isel(time=slice(i, i+seq_len)) \
+                                 .transpose('time', lr_lat, lr_lon) \
+                                 .values
+                     if x_lr.ndim == 3: x_lr = x_lr[..., np.newaxis]
                 
-                # NO agregamos np.newaxis, porque 'variable' ya es el último eje
-                
-                # 2. HR TARGET (Single Channel)
-                y_hr = ds['hr_target'].isel(time=slice(i, i+seq_len)) \
-                                      .transpose('time', 'y', 'x') \
-                                      .values
-                y_hr = y_hr[..., np.newaxis] # HR sí necesita canal extra (es 1 sola variable)
+                # 2. HR TARGET
+                # Usamos los nombres detectados para HR (hr_y, hr_x)
+                y_hr = da_hr.isel(time=slice(i, i+seq_len)) \
+                            .transpose('time', hr_y, hr_x) \
+                            .values
+                y_hr = y_hr[..., np.newaxis] 
                 
                 # 3. STATIC
                 x_st = np.repeat(static_norm[np.newaxis, ...], seq_len, axis=0)
@@ -285,9 +376,8 @@ class BigDataPipeline:
         lr_h, lr_w = self.cfg.LR_SHAPE
         st_h, st_w = self.cfg.HR_SHAPE
         
-        # shape=(Seq, H, W, N_Channels)
         spec_lr = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, lr_h, lr_w, n_channels), dtype=tf.float32)
-        spec_st = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, 18), dtype=tf.float32)
+        spec_st = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, Config.STATIC_CHANNELS), dtype=tf.float32)
         spec_hr = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, 1), dtype=tf.float32)
 
         train_ds = tf.data.Dataset.from_generator(
