@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  tf-trainer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tf
+    image: weather_thesis:tf
+    volumes:
+      - ./data:/app/data
+      - ./experiments:/app/experiments
+    # EN IDX USAMOS CPU POR DEFECTO PARA CONSTRUIR
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    command: python scripts/run_ablation.py
+
+  torch-trainer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.torch
+    image: weather_thesis:torch
+    volumes:
+      - ./data:/app/data
+      - ./experiments:/app/experiments
+    # EN IDX USAMOS CPU POR DEFECTO PARA CONSTRUIR
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    command: python scripts/train_torch.py

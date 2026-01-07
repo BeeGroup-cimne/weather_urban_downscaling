@@ -8,7 +8,7 @@ sys.path.append(os.path.join(os.getcwd(), 'src'))
 print(f"🔍 Iniciando Diagnóstico de Arquitectura DOWNSR (TensorFlow)...")
 
 try:
-    from src.models.downsr_unet import DownsrUNet
+    from src.tf_engine.downsr_unet import DownsrUNet
     print("✅ Clase 'DownsrUNet' importada correctamente.")
 except ImportError as e:
     print(f"❌ ERROR CRÍTICO DE IMPORTACIÓN: {e}")

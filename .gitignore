@@ -16,3 +16,6 @@ __pycache__/
 *.keras
 experiments/models/
 src/utils/barcelona_infalible.geojson
+.venv/
+.idx/
+__pycache__/

@@ -1,6 +1,10 @@
+import gc
 import os
 import sys
-import gc
+
+# Forzar compatibilidad con tf_keras (Keras 2) sobre TensorFlow 2.16+
+os.environ['TF_USE_LEGACY_KERAS'] = '1'
+
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.backend import clear_session
@@ -10,7 +14,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
 # IMPORTS DEL PROYECTO
-from src.models.downsr_unet import DownsrUNet
+from src.tf_engine.downsr_unet import DownsrUNet
 from src.data.bigdata_loader import get_dataloaders
 from src.training.engine import run_experiment, visualize_results, notify_completion, plot_comparative_history
 from config.config import Config

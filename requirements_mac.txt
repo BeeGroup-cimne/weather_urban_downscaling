@@ -1,0 +1,13 @@
+tensorflow>=2.15.0
+numpy<2.0
+pandas
+xarray
+zarr
+dask[complete]
+distributed
+fsspec
+h5py
+matplotlib
+scikit-learn
+tqdm
+tf_keras

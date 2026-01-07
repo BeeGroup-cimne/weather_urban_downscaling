@@ -1,0 +1,12 @@
+tensorflow[and-cuda]>=2.15.0
+numpy
+pandas
+xarray
+zarr
+dask[complete]
+distributed
+fsspec
+h5py
+matplotlib
+scikit-learn
+tqdm
