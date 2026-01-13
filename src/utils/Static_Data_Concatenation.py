@@ -6,10 +6,10 @@ from shapely.geometry import Point
 import matplotlib.pyplot as plt
 
 # --- CONFIGURACIÓN ---
-# 1. Tu archivo de estaciones (Zarr)
+# 1. Archivo de estaciones (Zarr)
 RUTA_ESTACIONES_ZARR = 'data/static/weather_static_engineered.zarr'
 
-# 2. Tus edificios 3D
+# 2. Edificios 3D
 RUTA_EDIFICIOS = "scripts/Scripts_Utils/barcelona_infalible.geojson"
 
 # 3. Salida

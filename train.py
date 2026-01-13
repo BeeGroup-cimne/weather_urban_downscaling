@@ -53,10 +53,10 @@ if __name__ == "__main__":
     # 5. Definir Modelos a Probar
     experiments = [
         #("UNet", ModelZoo.build_unet),
-        ("ConvLSTM", ModelZoo.build_convlstm), # Descomentar para probar otros
+        #("ConvLSTM", ModelZoo.build_convlstm), # Descomentar para probar otros
         #("Transformer", ModelZoo.build_transformer),
         #("Hybrid_UNet_LSTM", ModelZoo.build_hybrid_unet_lstm),
-        #("UNet_Mamba", ModelZoo.build_hybrid_unet_mamba)
+        ("UNet_Mamba", ModelZoo.build_hybrid_unet_mamba)
     ]
 
     histories = {}
