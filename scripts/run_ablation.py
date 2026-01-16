@@ -25,8 +25,8 @@ from config.config import Config
 # Mapeo de nombres a métodos de construcción en ModelZoo
 EXPERIMENTS_TO_RUN = {
     'unet': ModelZoo.build_unet,
-    'lstm': ModelZoo.build_hybrid_unet_lstm,
-    'mamba': ModelZoo.build_hybrid_unet_mamba
+    #'lstm': ModelZoo.build_hybrid_unet_lstm,
+  #'mamba': ModelZoo.build_hybrid_unet_mamba
 }
 
 # --- 🧠 FÍSICA: FUNCIÓN DE PÉRDIDA HÍBRIDA (TAO LOSS) ---

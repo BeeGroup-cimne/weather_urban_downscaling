@@ -4,5 +4,6 @@ RUN apt-get update && apt-get install -y git graphviz && rm -rf /var/lib/apt/lis
 COPY requirements_tf.txt .
 RUN pip install --no-cache-dir -r requirements_tf.txt
 COPY . .
-ENV PYTHONPATH="${PYTHONPATH}:/app/src"
+ENV TF_USE_LEGACY_KERAS=1
+ENV PYTHONPATH="${PYTHONPATH}:/app"
 CMD ["python", "scripts/run_ablation.py"]

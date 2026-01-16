@@ -122,10 +122,10 @@ def visualize_results(model, val_ds, title):
         (x_lr, x_st), y_true = next(iter(val_ds))
 
         # --- 🛑 CORRECCIÓN DE RUTA STATS 🛑 ---
-        # 1. Intentamos la ruta estándar de tu proyecto
+        # 1. Intentamos la ruta estándar del proyecto
         stats_path = os.path.join("scripts","stats_config.npz")
         
-        # 2. Si no existe, probamos en la raíz (fallback)
+        # 2. Si no existe, probamos en la raíz 
         if not os.path.exists(stats_path):
             stats_path = "stats_config.npz"
             

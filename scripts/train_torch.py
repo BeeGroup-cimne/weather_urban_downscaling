@@ -204,7 +204,7 @@ def train():
     train_dataset = ZarrIterableDataset(Config.PATH_CACHE, Config, split='train')
     val_dataset = ZarrIterableDataset(Config.PATH_CACHE, Config, split='val')
     
-    train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE)
+    train_loader = DataLoader(train_dataset, batch_size=Config.BATCH_SIZE, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=Config.BATCH_SIZE)
     
     # 3. Model

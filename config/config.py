@@ -30,10 +30,10 @@ class Config:
     # 3. HIPERPARÁMETROS
     # ---------------------------------------------------------
     SEED = 42
-    BATCH_SIZE = 8  
+    BATCH_SIZE = 4  
     EPOCHS = 50
     LEARNING_RATE = 1e-4
-    SEQ_LEN = 3 
+    SEQ_LEN = 6 
     SPLIT_FRACTION = 0.8 
 
     # ---------------------------------------------------------

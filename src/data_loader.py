@@ -10,7 +10,6 @@ import dask.array as da
 from dask.diagnostics import ProgressBar
 from scipy.interpolate import NearestNDInterpolator
 import os
-import tensorflow as tf
 from config.config import Config
 
 
@@ -217,7 +216,7 @@ class BigDataPipeline:
         ds_lr_clipped = ds_lr.sel(
             latitude=slice(max_lat + buffer, min_lat - buffer), 
             longitude=slice(min_lon - buffer, max_lon + buffer)
-        ).sortby('latitude', ascending=False).sortby('longitude', ascending=True)
+        ).sortby('latitude', ascending=True).sortby('longitude', ascending=True)
 
         print("   📦 Empaquetando variables LR...")
         # to_array crea dims: (variable, time, latitude, longitude)
@@ -282,10 +281,14 @@ class BigDataPipeline:
         
     def get_tf_datasets(self):
         """Generadores Multi-Canal (Corrige conflicto de nombres Lat/Lon vs Y/X)"""
+
+        
+
         print("🔌 Conectando generadores a Zarr...")
         ds = xr.open_zarr(self.cache_dir, consolidated=True)
 
-        # --- 🛠️ 1. DETECCIÓN INDEPENDIENTE DE DIMENSIONES 🛠️ ---
+        # ✅ IMPORT LAZY: Solo importa TF si realmente llamamos a esta función
+        import tensorflow as tf
         
         # A) Analizar Input de Baja Resolución (LR)
         # Buscamos qué nombres usa Específicamente la variable 'lr_input'
