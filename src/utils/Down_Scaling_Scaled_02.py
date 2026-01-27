@@ -8,9 +8,13 @@ Este script orquesta la carga de datos meteorológicos, el preprocesamiento,
 y la comparación de tres modelos de Deep Learning (ConvLSTM, U-Net, Transformer).
 
 Autor: Kerin Cardona
+
+NOTA: Este es un script legacy de experimentación.
+Para producción, usar scripts/run_ablation.py
 """
 
 import os
+import sys
 import platform
 import numpy as np
 import pandas as pd
@@ -28,15 +32,21 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.models import Model
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger
 
+# Add project root to path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, PROJECT_ROOT)
+
+# Import central config
+from config.config import Config as CentralConfig
 
 # ==========================================
-# 1. CONFIGURACIÓN GLOBAL (Armonizada)
+# 1. CONFIGURACIÓN GLOBAL (Extiende Config central)
 # ==========================================
 class Config:
-    # Rutas de archivos
-    PATH_HR = "/Users/kerincardona/weather_urban_downscaling_project/scripts/estaciones_interpoladas_final.nc"
-    PATH_LR = "/Users/kerincardona/Documents/weather_urban_downscaling/era5land/era5_combined_01_03.grib"
-    PATH_STATIC = '/Users/kerincardona/extracted_zarr_data/weather_static_features.zarr'
+    # Rutas de archivos - Heredadas de configuración central
+    PATH_HR = CentralConfig.PATH_HR
+    PATH_LR = CentralConfig.PATH_LR
+    PATH_STATIC = CentralConfig.PATH_STATIC
 
     # Hiperparámetros (Basados en las necesidades del Transformer - Exp 3)
     SEED = 42
@@ -52,13 +62,6 @@ class Config:
 
     # Configuración de Hardware
     IS_MAC_SILICON = platform.system() == "Darwin" and platform.processor() == "arm"
-
-
-# Configurar semillas
-tf.random.set_seed(Config.SEED)
-np.random.seed(Config.SEED)
-
-print(f"🔧 Configuración cargada. Mac Silicon detectado: {Config.IS_MAC_SILICON}")
 
 # ==========================================
 # 2. MOTOR DE DATOS BIG DATA (Scalable Pipeline)

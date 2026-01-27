@@ -1,0 +1,33 @@
+name: env_torch
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  # Pytorch Core (Selección automática de CUDA/MPS/CPU según plataforma)
+  - pytorch
+  - torchvision
+  - torchaudio
+  # Manejo de Datos Científicos
+  - numpy
+  - pandas
+  - xarray
+  - dask
+  - zarr
+  - netcdf4
+  - bottleneck
+  # Utilidades
+  - tqdm
+  - matplotlib
+  - scipy
+  - scikit-learn
+  # Pip dependencies para cosas específicas o no disponibles en conda channel principal
+  - pip:
+      - mamba-ssm>=1.1.1  # Intentará compilar si hay CUDA, sino fallará o necesita wheel específico
+      - causal-conv1d>=1.1.0
+      - fsspec
+      - cfgrib
+      - eccodes

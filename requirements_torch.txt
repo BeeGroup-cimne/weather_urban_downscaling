@@ -14,3 +14,14 @@ h5py
 matplotlib
 scikit-learn
 tqdm
+netcdf4
+h5netcdf
+cfgrib
+eccodes
+scipy
+pyproj
+# Neural network architecture visualization
+torchviz
+pydot
+graphviz
+

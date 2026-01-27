@@ -1,21 +1,65 @@
+# Git ignore patterns
+
+# Data files (too large for git)
 *.nc
 *.grib
-*.zarr
+*.zarr/
 *.npy
+*.npz
+*.h5
+*.keras
+*.geojson
+
+# Data directories
 data/raw/*
 data/processed/*
 data/static/*
-extracted_zarr_data/
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/processed/era5land/.gitkeep
+
+# Experiment outputs (can be regenerated)
+experiments/models/*
+experiments/logs/*
+experiments/figures/*
+!experiments/models/.gitkeep
+!experiments/logs/.gitkeep
+!experiments/figures/.gitkeep
+
+# Python
 __pycache__/
 *.pyc
-.DS_Store
-*.csv
-# Ignorar Big Data y Modelos pesados
-*.geojson
-*.h5
-*.keras
-experiments/models/
-src/utils/barcelona_infalible.geojson
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
 .venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Misc
+*.log
+*.tmp
+*.bak
+
+# IDX (Google Cloud IDE)
 .idx/
-__pycache__/

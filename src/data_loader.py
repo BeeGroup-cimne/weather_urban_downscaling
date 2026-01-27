@@ -17,13 +17,7 @@ class BigDataPipeline:
     def __init__(self, config):
         self.cfg = config
         self.cache_dir = self.cfg.PATH_CACHE
-        self.stats_path = "./stats_config.npz"
-        self.ds_static_single = None 
-
-        processed_dir = os.path.dirname(self.cache_dir)
-        os.makedirs(processed_dir, exist_ok=True)
-
-        self.stats_path = os.path.join(processed_dir, "stats_config.npz")
+        self.stats_path = self.cfg.STATS_PATH
         
         self.ds_static_single = None 
         print(f"📂 Cache configurado en: {self.cache_dir}")
@@ -37,7 +31,7 @@ class BigDataPipeline:
         print("🗺️ Processing Static Data...")
         
         # Definimos ruta del caché estático
-        static_cache_path = "./processed_cache_zarr/static_processed.npy"
+        static_cache_path = self.cfg.STATIC_CACHE_PATH
 
         if os.path.exists(static_cache_path):
             print("🗺️ Cargando datos estáticos desde caché (.npy)...")
@@ -197,9 +191,57 @@ class BigDataPipeline:
         _, index = np.unique(ds_lr['time'], return_index=True)
         ds_lr = ds_lr.isel(time=index)
 
-        # 5. Sincronización
+        # 5. Sincronización Robusta (Fix Temporal)
+        print(f"   🔍 DEBUG TEMPORAL:")
+        print(f"      HR Time Type: {ds_hr.time.dtype}")
+        print(f"      HR Range: {ds_hr.time.min().values} -> {ds_hr.time.max().values}")
+        print(f"      HR Samples: {ds_hr.time.values[:3]}")
+        print(f"      LR Time Type: {ds_lr.time.dtype}")
+        print(f"      LR Range: {ds_lr.time.min().values} -> {ds_lr.time.max().values}") 
+        print(f"      LR Samples: {ds_lr.time.values[:3]}")
+
+        # --- FIX: NORMALIZACIÓN DE TIEMPOS ---
+        # Convertimos ambos ejes temporales a pandas.DatetimeIndex con precisión horaria
+        # para evitar problemas de nanosegunos, cftime, zonas horarias, etc.
+        import pandas as pd
+        
+        # Normalizar HR
+        times_hr_raw = ds_hr.time.values
+        if hasattr(times_hr_raw[0], 'strftime'):  # cftime objects
+            times_hr_pd = pd.to_datetime([t.strftime('%Y-%m-%d %H:%M:%S') for t in times_hr_raw])
+        else:
+            times_hr_pd = pd.to_datetime(times_hr_raw)
+        
+        # Reducir a precisión horaria (elimina microsegundos, ns)
+        times_hr_normalized = times_hr_pd.floor('H')
+        
+        # Normalizar LR
+        times_lr_raw = ds_lr.time.values
+        if hasattr(times_lr_raw[0], 'strftime'):  # cftime objects
+            times_lr_pd = pd.to_datetime([t.strftime('%Y-%m-%d %H:%M:%S') for t in times_lr_raw])
+        else:
+            times_lr_pd = pd.to_datetime(times_lr_raw)
+        
+        times_lr_normalized = times_lr_pd.floor('H')
+        
+        print(f"   ✅ Tiempos normalizados (Precisión horaria)")
+        print(f"      HR: {times_hr_normalized.min()} -> {times_hr_normalized.max()}")
+        print(f"      LR: {times_lr_normalized.min()} -> {times_lr_normalized.max()}")
+        
+        # Asignar los nuevos índices normalizados
+        ds_hr['time'] = times_hr_normalized
+        ds_lr['time'] = times_lr_normalized
+        
+        # Ahora sí, intersección
         common_times = np.intersect1d(ds_hr.time.values, ds_lr.time.values)
-        if len(common_times) == 0: raise ValueError("❌ Sin coincidencia temporal.")
+        
+        if len(common_times) == 0: 
+            print("      ❌ ERROR: No hay intersección temporal incluso después de normalizar.")
+            print(f"      HR disponible: {len(times_hr_normalized)} timesteps")
+            print(f"      LR disponible: {len(times_lr_normalized)} timesteps")
+            raise ValueError("❌ Sin coincidencia temporal. Verifica que los datasets cubran el mismo período.")
+        
+        print(f"   ✅ Intersección exitosa: {len(common_times)} timesteps comunes")
         ds_hr = ds_hr.sel(time=common_times)
         ds_lr = ds_lr.sel(time=common_times)
 

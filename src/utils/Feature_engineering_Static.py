@@ -1,13 +1,20 @@
 import xarray as xr
 import numpy as np
 import os
+import sys
+
+# Add project root to path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, PROJECT_ROOT)
+
+from config.config import Config
 
 # ================= CONFIGURACIÓN =================
-# Ruta a tu archivo de datos estáticos actual (el Zarr original)
-INPUT_PATH = '/Users/kerincardona/extracted_zarr_data/weather_static_features.zarr'
+# Ruta a tu archivo de datos estáticos actual
+INPUT_PATH = os.environ.get('STATIC_INPUT_PATH', Config.PATH_STATIC)
 
 # Ruta donde guardaremos el dataset mejorado
-OUTPUT_PATH = 'data/static/weather_static_engineered.zarr'
+OUTPUT_PATH = os.path.join(Config.BASE_DIR, 'data', 'static', 'weather_static_engineered.zarr')
 
 def engineer_static_features():
     print(f"🔧 Iniciando Feature Engineering sobre: {INPUT_PATH}")

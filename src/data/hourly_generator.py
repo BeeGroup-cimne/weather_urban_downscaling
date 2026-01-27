@@ -4,28 +4,63 @@ import pandas as pd
 from scipy.spatial import cKDTree
 from pyproj import Transformer
 import os
+import sys
 
-# CONFIGURACIÓN
+# Añadir ruta del proyecto
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(PROJECT_ROOT)
 
-PATH_STATIONS = '/Users/kerincardona/weather_urbclim_200801-201712.zarr'
-PATH_GRID_REF = "/Users/kerincardona/Documents/weather_urban_downscaling/urbclim/tas_Barcelona_UrbClim_2008_03_v1.0.nc"
-OUTPUT_FILE = "estaciones_interpoladas_final.nc"
+from config.config import Config
+
+# CONFIGURACIÓN - Rutas portables del proyecto
+# 
+# Archivo fuente de estaciones meteorológicas:
+# - Se busca primero en data/raw/weather_stations.zarr
+# - Si no existe, se usa la variable de entorno WEATHER_STATIONS_PATH
+# - Fallback a un path por defecto (solo para desarrollo local)
+PATH_STATIONS_DEFAULT = os.path.join(PROJECT_ROOT, 'data', 'raw', 'weather_stations.zarr')
+PATH_STATIONS = os.environ.get('WEATHER_STATIONS_PATH', PATH_STATIONS_DEFAULT)
+
+# Archivo de referencia para la grilla (usamos el HR existente como plantilla)
+PATH_GRID_REF = Config.PATH_HR
+# Archivo de salida
+OUTPUT_FILE = Config.PATH_HR
 
 # Configuración IDW
 K_NEIGHBORS = 12
 POWER = 2.0
 
-def process_stations_final():
+def process_stations_final(start_date_str=None, end_date_str=None):
+    """
+    Pipeline para interpolar estaciones meteorológicas a una grilla regular.
+    
+    Args:
+        start_date_str: Fecha de inicio en formato 'YYYY-MM-DD' (opcional, usa todo si no se especifica)
+        end_date_str: Fecha de fin en formato 'YYYY-MM-DD' (opcional)
+    """
     print(f"🚀 Iniciando Pipeline Final (Conversión + IDW)...")
     
     # 1. Cargar Datos
+    if not os.path.exists(PATH_STATIONS):
+        print(f"❌ ERROR: No se encontró el archivo de estaciones: {PATH_STATIONS}")
+        print("   Por favor, ajusta PATH_STATIONS a la ubicación correcta de tus datos de estaciones.")
+        return
+    
     ds = xr.open_dataset(PATH_STATIONS, chunks={'time': 100})
     
-    # Filtro temporal (3 meses)
-    start_date = pd.to_datetime(ds.time.values[0])
-    end_date = start_date + pd.DateOffset(months=3)
+    # Filtro temporal - AHORA CONFIGURABLE
+    if start_date_str and end_date_str:
+        start_date = pd.to_datetime(start_date_str)
+        end_date = pd.to_datetime(end_date_str)
+        print(f"   ⏱️ Filtrando período: {start_date} -> {end_date}")
+    else:
+        # Usar todo el rango disponible
+        start_date = pd.to_datetime(ds.time.values[0])
+        end_date = pd.to_datetime(ds.time.values[-1])
+        print(f"   ⏱️ Usando rango completo: {start_date} -> {end_date}")
+    
     ds_subset = ds.sel(time=slice(start_date, end_date))
-    print(f"   ⏱️ Pasos de tiempo: {len(ds_subset.time)}")
+    print(f"   ⏱️ Pasos de tiempo a procesar: {len(ds_subset.time)}")
 
     # 2. TRANSFORMACIÓN DE COORDENADAS
     print("🌍 Transformando coordenadas de estaciones (EPSG:3035 -> EPSG:4326)...")
@@ -142,4 +177,10 @@ def process_stations_final():
     print("✅ ¡Pipeline Final Completado!")
 
 if __name__ == "__main__":
-    process_stations_final()
+    import argparse
+    parser = argparse.ArgumentParser(description='Interpola estaciones meteorológicas a grilla regular')
+    parser.add_argument('--start', type=str, help='Fecha inicio (YYYY-MM-DD)')
+    parser.add_argument('--end', type=str, help='Fecha fin (YYYY-MM-DD)')
+    args = parser.parse_args()
+    
+    process_stations_final(args.start, args.end)

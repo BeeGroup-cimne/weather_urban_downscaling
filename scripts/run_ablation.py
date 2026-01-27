@@ -24,9 +24,9 @@ from config.config import Config
 # --- CONFIGURACIÓN DE EXPERIMENTOS ---
 # Mapeo de nombres a métodos de construcción en ModelZoo
 EXPERIMENTS_TO_RUN = {
-    'unet': ModelZoo.build_unet,
+    #'unet': ModelZoo.build_unet,
     #'lstm': ModelZoo.build_hybrid_unet_lstm,
-  #'mamba': ModelZoo.build_hybrid_unet_mamba
+    'mamba': ModelZoo.build_hybrid_unet_mamba
 }
 
 # --- 🧠 FÍSICA: FUNCIÓN DE PÉRDIDA HÍBRIDA (TAO LOSS) ---
@@ -48,7 +48,7 @@ def main():
     print(f"\n🚀 INICIANDO ESTUDIO DE ABLACIÓN (Alineado con train.py)")
     print(f"   ⚡ Hardware: {Config.DEVICE}")
     
-    output_base_dir = os.path.join(PROJECT_ROOT, "experiments")
+    output_base_dir = Config.EXPERIMENTS_DIR
     os.makedirs(output_base_dir, exist_ok=True)
     
     all_histories = {}

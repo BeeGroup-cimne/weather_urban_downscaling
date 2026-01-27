@@ -1,27 +1,37 @@
+#!/usr/bin/env python
+"""
+Utility to verify data orientation and visualize HR/LR alignment.
+"""
+import os
+import sys
+
+# Add project root to path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, PROJECT_ROOT)
+
 import xarray as xr
 import matplotlib.pyplot as plt
 import numpy as np
-import os
+from config.config import Config
 
-# --- CONFIG ---
-CACHE_DIR = "/Users/kerincardona/weather_urban_downscaling/data/processed/weather_cache.zarr"
+# Use project-relative path
+CACHE_DIR = Config.PATH_CACHE
 
 def verificar_orientacion():
     print(f"🔍 Inspeccionando archivo: {CACHE_DIR}")
     
     if not os.path.exists(CACHE_DIR):
         print("❌ No se encuentra el archivo Zarr.")
+        print(f"   Ejecuta primero el pipeline de datos.")
         return
 
     ds = xr.open_zarr(CACHE_DIR, consolidated=True)
     
     # 1. IDENTIFICAR VARIABLES
-    # Buscamos nombres típicos de latitud/longitud
     print("\n--- 1. Análisis de Dimensiones ---")
     print(f"Dimensiones encontradas: {list(ds.dims)}")
     
     # Detectar cuál es el Target (HR) y cuál el Input (LR)
-    # Asumimos que 'hr_target' y 'lr_input' son las claves
     if 'hr_target' not in ds or 'lr_input' not in ds:
         print("⚠️ No encuentro las variables 'hr_target' o 'lr_input'.")
         print(f"Variables disponibles: {list(ds.data_vars)}")
@@ -34,20 +44,11 @@ def verificar_orientacion():
     print(f"Shape LR (Input):  {lr_var.shape} -> Nombres: {lr_var.dims}")
 
     # 2. VERIFICACIÓN DE ORDEN (Lat vs Lon)
-    # En meteorología/imágenes, el orden ESTÁNDAR debe ser: (Time, Latitud, Longitud)
-    # Si es (Time, Longitud, Latitud), saldrá rotado en imshow.
-    
     print("\n--- 2. Verificación de Coordenadas ---")
     
-    # Función auxiliar para chequear si una dimensión parece Latitud o Longitud
-    def es_latitud(dim_name, coords):
-        # Latitud varía menos en Barcelona (41.x) que Longitud (2.x)? No, al revés.
-        # Mejor: Latitud suele llamarse 'lat', 'y', 'latitude'
-        return any(x in dim_name.lower() for x in ['lat', 'y'])
-
     # Chequeo HR
-    dims_hr = hr_var.dims # Ejemplo: ('time', 'y', 'x') o ('time', 'lat', 'lon')
-    spatial_dims_hr = dims_hr[-2:] # Las últimas dos suelen ser las espaciales
+    dims_hr = hr_var.dims
+    spatial_dims_hr = dims_hr[-2:]
     print(f"Dimensiones espaciales HR: {spatial_dims_hr}")
     
     # Chequeo LR
@@ -63,10 +64,9 @@ def verificar_orientacion():
     data_lr = lr_var.isel(time=0)
     
     # Si tiene canales, tomamos el primero (Temp)
-    if 'channel' in data_hr.dims: # O la dimensión que sea canales
+    if 'channel' in data_hr.dims:
         data_hr = data_hr.isel({d:0 for d in data_hr.dims if d not in spatial_dims_hr})
     elif data_hr.ndim > 2:
-        # Asumimos último eje son canales
         data_hr = data_hr[..., 0]
 
     if 'channel' in data_lr.dims:
@@ -77,9 +77,8 @@ def verificar_orientacion():
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     
     # --- FILA 1: IMSHOW (RAW NUMPY) ---
-    # Esto muestra cómo lo ve la Red Neuronal (Matriz pura)
     ax1 = axes[0, 0]
-    ax1.imshow(data_lr.values, origin='lower') # origin='lower' pone (0,0) abajo a la izq
+    ax1.imshow(data_lr.values, origin='lower')
     ax1.set_title(f"Input LR (Numpy/Imshow)\nShape: {data_lr.shape}")
     
     ax2 = axes[0, 1]
@@ -87,8 +86,6 @@ def verificar_orientacion():
     ax2.set_title(f"Target HR (Numpy/Imshow)\nShape: {data_hr.shape}")
 
     # --- FILA 2: XARRAY PLOT (GEO-CONSCIENTE) ---
-    # Esto usa las coordenadas reales. Si esto sale bien pero lo de arriba sale mal,
-    # significa que los datos están transpuestos.
     ax3 = axes[1, 0]
     try:
         data_lr.plot(ax=ax3)
@@ -104,8 +101,12 @@ def verificar_orientacion():
         ax4.text(0.5, 0.5, "Error ploteando Xarray HR")
 
     plt.tight_layout()
-    plt.savefig("diagnostico_rotacion.png")
-    print("📸 Diagnóstico guardado en: diagnostico_rotacion.png")
+    
+    # Save to experiments/figures
+    output_path = os.path.join(Config.EXPERIMENTS_DIR, 'figures', 'diagnostico_rotacion.png')
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path)
+    print(f"📸 Diagnóstico guardado en: {output_path}")
     plt.show()
 
 if __name__ == "__main__":

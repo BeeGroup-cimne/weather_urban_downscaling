@@ -48,7 +48,7 @@ def run_experiment(model, train_ds, val_ds, experiment_name):
     """Ejecuta el ciclo de entrenamiento estandarizado"""
     print(f"\n🧪 Iniciando {experiment_name}...")
 
-    base_dir = "experiments"
+    base_dir = Config.EXPERIMENTS_DIR
     log_dir = os.path.join(base_dir, "logs")
     model_dir = os.path.join(base_dir, "models")
     fig_dir = os.path.join(base_dir, "figures")
@@ -113,7 +113,7 @@ def visualize_results(model, val_ds, title):
 
         # Definir carpeta de destino
         # Usamos os.path.join para compatibilidad de rutas
-        output_dir = os.path.join("experiments", "figures")
+        output_dir = os.path.join(Config.EXPERIMENTS_DIR, "figures")
         
         #Crear la carpeta si no existe
         os.makedirs(output_dir, exist_ok=True)
@@ -122,15 +122,7 @@ def visualize_results(model, val_ds, title):
         (x_lr, x_st), y_true = next(iter(val_ds))
 
         # --- 🛑 CORRECCIÓN DE RUTA STATS 🛑 ---
-        # 1. Intentamos la ruta estándar de tu proyecto
-        # Since we moved utils, we need to look for stats one level up if calling from src/utils or adjust logic.
-        # But this function is likely called from root scripts.
-        # For safety let's look in likely places.
-        stats_path = os.path.join("scripts","stats_config.npz")
-        
-        # 2. Si no existe, probamos en la raíz (fallback)
-        if not os.path.exists(stats_path):
-            stats_path = "stats_config.npz"
+        stats_path = Config.STATS_PATH
             
         print(f"   📊 Cargando estadísticas desde: {stats_path}")
         stats = np.load(stats_path)

@@ -28,16 +28,22 @@ It features a dual-engine architecture supporting both **TensorFlow (Legacy & Mo
 ### Prerequisites
 *   Python 3.10+
 *   TensorFlow 2.13+ (Mac Silicon optimized) OR PyTorch 2.x
+*   Docker & Docker Compose (recommended for server deployment)
 *   GDAL/GeoPandas (for static data processing)
 
-### Setup
+### Option 1: Local Setup
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/your-org/weather_urban_downscaling.git
 cd weather_urban_downscaling
 
-# 2. Install Dependencies
+# 2. Create virtual environment
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+# .venv\Scripts\activate   # Windows
+
+# 3. Install Dependencies
 # For Mac Silicon (M1/M2/M3):
 pip install -r requirements_mac.txt
 
@@ -45,23 +51,79 @@ pip install -r requirements_mac.txt
 pip install -r requirements_tf.txt  # or requirements_torch.txt
 ```
 
+### Option 2: Docker Setup (Recommended for Servers) 🐳
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/your-org/weather_urban_downscaling.git
+cd weather_urban_downscaling
+
+# 2. Prepare the data directory structure
+mkdir -p data/processed/era5land data/raw
+
+# 3. Copy your data files (see Data Requirements section below)
+
+# 4. Build Docker images
+docker-compose build
+
+# 5. Run training
+# TensorFlow (default):
+docker-compose run tf-trainer
+
+# PyTorch (experimental):
+docker-compose run torch-trainer
+
+# With GPU support (requires nvidia-docker):
+# Uncomment the 'deploy' section in docker-compose.yml first
+docker-compose run tf-trainer
+```
+
+---
+
+## 📁 Data Requirements
+
+Before running, you need to provide the following data files in the `data/` directory:
+
+```
+data/
+├── processed/
+│   ├── estaciones_interpoladas_final.nc   # HR target (interpolated stations)
+│   ├── weather_static_FINAL_stations.zarr/ # Static features (buildings, etc.)
+│   └── era5land/
+│       └── lr_2010_2025.grib              # LR input (ERA5-Land)
+└── raw/
+    └── weather_stations.zarr/             # Raw station data (optional)
+```
+
+**Data Sources:**
+- **ERA5-Land**: Download from [Copernicus Climate Data Store](https://cds.climate.copernicus.eu/)
+- **HR Target**: Generated from meteorological station data using `src/data/hourly_generator.py`
+- **Static Features**: Generated from urban morphology data
+
 ---
 
 ## 📂 Project Structure
 
 ```
 ├── config/
-│   └── config.py           # Global hyperparameters & paths
-├── data/                   # Data storage (Zarr cache, Raw NetCDF)
+│   └── config.py           # Global hyperparameters & paths (auto-detects hardware)
+├── data/                   # Data storage (Zarr cache, Raw NetCDF) - NOT in git
+├── docker/
+│   ├── Dockerfile.tf       # TensorFlow container
+│   └── Dockerfile.torch    # PyTorch container
+├── docker-compose.yml      # Container orchestration
 ├── scripts/
 │   ├── run_ablation.py     # Main experimentation script (TF)
 │   ├── train_torch.py      # PyTorch training script
-│   └── run_inference.py    # Production inference
+│   └── diagnose_time.py    # Data diagnostic utility
 ├── src/
 │   ├── data_loader.py      # BigDataPipeline (ETL & Generators)
 │   ├── models_legacy.py    # TF Models (ReLU, No-BN -> Sharp Results)
 │   ├── tf_engine/          # Refactored TF components
 │   └── torch_engine/       # PyTorch Mamba Utilities
+├── experiments/            # Training outputs (models, logs, figures)
+├── requirements_tf.txt     # TensorFlow dependencies
+├── requirements_torch.txt  # PyTorch dependencies
 └── train.py                # Main Entry Point
 ```
 
@@ -74,10 +136,14 @@ pip install -r requirements_tf.txt  # or requirements_torch.txt
 The main script uses the **Standard/Legacy** methodology which ensures high sharpness by avoiding unnecessary Batch Normalization in the generator.
 
 ```bash
+# Local:
 python train.py
+
+# Docker:
+docker-compose run tf-trainer
 ```
 
-*   **Pipeline**: Automatically generates `processed_cache_zarr/static_processed.npy` if missing.
+*   **Pipeline**: Automatically generates `data/processed/static_processed.npy` if missing.
 *   **Models**: Trains a Hybrid U-Net + Mamba by default.
 
 ### 2. Ablation Study
@@ -85,7 +151,11 @@ python train.py
 To compare multiple architectures (U-Net vs LSTM vs Mamba) under identical conditions:
 
 ```bash
+# Local:
 python scripts/run_ablation.py
+
+# Docker:
+docker-compose run tf-trainer python scripts/run_ablation.py
 ```
 
 *   **Outputs**: Generates `experiments/ablation_summary.csv` and comparative plots.
@@ -96,10 +166,44 @@ python scripts/run_ablation.py
 To train the Mamba model using PyTorch:
 
 ```bash
+# Local:
 python scripts/train_torch.py
+
+# Docker:
+docker-compose run torch-trainer
 ```
 
 *   **Features**: Implements a custom 5D-capable Mamba block and the Hybrid (MSE+SSIM) loss in PyTorch.
+
+---
+
+## 🐳 Docker Commands Quick Reference
+
+```bash
+# Build all images
+docker-compose build
+
+# Run TensorFlow trainer
+docker-compose run tf-trainer
+
+# Run PyTorch trainer
+docker-compose run torch-trainer
+
+# Run data preprocessing only
+docker-compose run data-prep
+
+# Run with custom command
+docker-compose run tf-trainer python -c "from config.config import Config; print(Config.DEVICE)"
+
+# View logs
+docker-compose logs -f tf-trainer
+
+# Clean up containers
+docker-compose down
+
+# Remove images
+docker-compose down --rmi all
+```
 
 ---
 
@@ -121,10 +225,26 @@ These are concatenated with the dynamic low-resolution input, allowing the model
 
 ## 📊 Results
 
-| Model | MAE (ºC) | SSIM | Definition |
-|-------|----------|------|------------|
-| U-Net (Baseline) | 1.2 | 0.65 | Low |
-| **U-Net + Mamba** | **0.8** | **0.82** | **High** |
+| Model             | MAE (ºC) | SSIM     | Definition |
+| ----------------- | -------- | -------- | ---------- |
+| U-Net (Baseline)  | 1.2      | 0.65     | Low        |
+| **U-Net + Mamba** | **0.8**  | **0.82** | **High**   |
+
+---
+
+## 🔧 Troubleshooting
+
+### "Sin coincidencia temporal" Error
+This means the time ranges of HR and LR data don't overlap. Run the diagnostic:
+```bash
+python scripts/diagnose_time.py
+```
+
+### Permission Errors on Mac
+Grant Full Disk Access to Terminal in System Settings > Privacy & Security.
+
+### Docker GPU Not Detected
+Ensure nvidia-docker is installed and uncomment the `deploy` section in `docker-compose.yml`.
 
 ---
 

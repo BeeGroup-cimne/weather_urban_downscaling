@@ -1,14 +1,48 @@
+# Docker ignore patterns
 
+# Version control
 .git
+.gitignore
+
+# Virtual environments
 .venv
+venv
+
+# IDE
 .idea
+.vscode
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Python cache
 __pycache__
 *.pyc
 *.pyo
 *.pyd
+.Python
+*.egg-info
+
+# Jupyter
 .ipynb_checkpoints
-experiments/
+
+# Data (mounted as volume, not copied)
 data/
+experiments/
 processed_cache_zarr/
-cronograma_tesis_final.png
+
+# Documentation assets
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.md
+!README.md
+
+# IDX
+.idx/
+
+# Misc
+*.log
+*.tmp
