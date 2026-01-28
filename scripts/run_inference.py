@@ -72,10 +72,12 @@ if __name__ == "__main__":
     # 📝 LISTA DE MODELOS A PROBAR
     # Pon aquí los nombres exactos de tus archivos .h5
     mis_modelos = [
-        #"ConvLSTM_best.h5",
+        "UNet_best.h5",
+        "ConvLSTM_best.h5", 
         "Transformer_best.h5",
-        # "UNet_best.h5",   # Agrega los que tengas
-        # "Hybrid_best.h5"
+        # Agrega modelos híbridos si existen:
+        # "Hybrid_LSTM_best.h5",
+        # "Hybrid_Mamba_best.h5"
     ]
 
     print(f"🚀 Iniciando evaluación masiva de {len(mis_modelos)} modelos...\n")

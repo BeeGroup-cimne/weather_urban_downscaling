@@ -19,7 +19,8 @@ sys.path.extend([parent_dir, os.path.join(parent_dir, 'src')])
 
 from config.gpu_server_config import GPUServerConfig as Config
 from src.optimized_data_pipeline import OptimizedBigDataPipeline
-from src.models_legacy import build_unet_legacy, build_conv_lstm_model, build_hybrid_mamba_model
+from src.models_legacy import ModelZoo
+from src.models.transformer_optimized import build_lightweight_transformer_unet
 from src.utils_legacy import run_experiment, notify_completion
 
 class GPUOptimizedTrainer:
@@ -85,28 +86,27 @@ class GPUOptimizedTrainer:
         try:
             # UNet Optimizado
             print(f"   📦 Construyendo UNet optimizado...")
-            models['UNet'] = build_unet_legacy(
-                input_shape=input_shape,
-                filters=self.config.UNET_FILTERS,
-                dropout_rate=0.1
-            )
+            models['UNet'] = ModelZoo.build_unet()
             
             # ConvLSTM Optimizado  
             print(f"   📦 Construyendo ConvLSTM optimizado...")
-            models['ConvLSTM'] = build_conv_lstm_model(
+            models['ConvLSTM'] = ModelZoo.build_conv_lstm()
+            
+            # ConvLSTM Optimizado  
+            print(f"   📦 Construyendo ConvLSTM optimizado...")
+            models['ConvLSTM'] = ModelZoo.build_hybrid_unet_lstm()
+            
+            # Transformer Optimizado
+            print(f"   📦 Construyendo Transformer optimizado...")
+            models['Transformer'] = build_lightweight_transformer_unet(
                 input_shape=input_shape,
-                filters=self.config.CONVLSTM_FILTERS,
-                dropout_rate=0.1
+                max_memory_gb=self.config.GPU_MEMORY_GB or 8
             )
             
             # Mamba Optimizado (si hay suficiente memoria)
             if self.config.GPU_MEMORY_GB and self.config.GPU_MEMORY_GB >= 24:
                 print(f"   📦 Construyendo Mamba optimizado...")
-                models['Mamba'] = build_hybrid_mamba_model(
-                    input_shape=input_shape,
-                    model_dim=self.config.MAMBA_MODEL_DIM,
-                    state_dim=self.config.MAMBA_STATE_DIM
-                )
+                models['Mamba'] = ModelZoo.build_hybrid_unet_mamba()
             else:
                 print(f"⚠️ Omitiendo Mamba (memoria GPU insuficiente)")
             
