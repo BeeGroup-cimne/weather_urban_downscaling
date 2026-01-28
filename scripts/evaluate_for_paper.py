@@ -190,6 +190,7 @@ def main():
         "UNet_best.h5",
         "ConvLSTM_best.h5", 
         "Transformer_best.h5",
+        "Transformer_gpu_optimized.h5",  # Nuevo Transformer optimizado
         # Agrega más modelos si existen
     ]
     

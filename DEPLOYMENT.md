@@ -90,12 +90,27 @@ chmod +x deploy_gpu_server.sh
 - Assumes data is already processed
 - Trains models with optimized configuration
 
-### Option 3: Include Mamba (Advanced)
+### Option 3: Include Transformer (Recommended)
+```bash
+./deploy_gpu_server.sh --include-transformer
+```
+- Trains Transformer model with multi-head attention
+- Memory-optimized for GPUs 8GB+
+- State-of-the-art spatiotemporal modeling
+
+### Option 4: Include Mamba (Advanced)
 ```bash
 ./deploy_gpu_server.sh --include-mamba
 ```
 - Trains Mamba model (requires 24GB+ GPU)
 - Uses PyTorch backend
+
+### Option 5: Include All Models
+```bash
+./deploy_gpu_server.sh --include-all
+```
+- Trains UNet, ConvLSTM, Transformer, and Mamba (if GPU allows)
+- Complete experimental comparison
 
 ### Option 4: Results Only
 ```bash
@@ -154,6 +169,7 @@ weather_urban_downscaling/
 
 ### Training Services
 - **tf-trainer**: TensorFlow models (UNet, ConvLSTM)
+- **transformer-trainer**: TensorFlow Transformer models with memory optimization
 - **torch-trainer**: PyTorch models (Mamba)
 
 ### Support Services
@@ -180,7 +196,8 @@ deploy:
 ### Training Metrics
 - **UNet**: MAE ~0.23, Parameters ~2M
 - **ConvLSTM**: MAE ~0.23, Parameters ~5M  
-- **Mamba**: MAE ~0.24, Parameters ~0.7M
+- **Transformer**: MAE ~0.22, Parameters ~3-4M (state-of-the-art attention)
+- **Mamba**: MAE ~0.24, Parameters ~0.7M (most efficient)
 
 ### Paper-Ready Outputs
 - **Model checkpoints** in `experiments/models/`

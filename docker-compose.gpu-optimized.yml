@@ -50,6 +50,41 @@ services:
       - gpu
 
   # =============================================================
+  # Transformer Trainer Optimizado para GPU Server
+  # =============================================================
+  transformer-trainer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tf
+    image: weather_thesis:transformer
+    container_name: weather_transformer_trainer
+    volumes:
+      - ./data:/app/data
+      - ./experiments:/app/experiments
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TF_USE_LEGACY_KERAS=1
+      - CUDA_VISIBLE_DEVICES=0
+      - TF_GPU_ALLOCATOR=cuda_malloc_async
+    deploy:
+      resources:
+        limits:
+          memory: 32G  # Transformers necesitan memoria para attention
+          cpus: '8'
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '8gb'
+    command: >
+      python scripts/train_transformer.py
+    restart: "no"
+    profiles:
+      - training
+      - gpu
+      
+  # =============================================================
   # PyTorch Trainer Optimizado para GPU Server (Mamba)
   # =============================================================
   torch-trainer:

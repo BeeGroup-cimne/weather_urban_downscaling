@@ -127,6 +127,32 @@ run_training() {
     print_success "Entrenamiento completado"
 }
 
+# Entrenamiento Transformer - opcional
+run_transformer_training() {
+    if [[ $1 == "--include-transformer" ]]; then
+        print_status "🤖 Iniciando entrenamiento Transformer..."
+        
+        docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up transformer-trainer
+        
+        print_success "Entrenamiento Transformer completado"
+    else
+        print_warning "Omitiendo entrenamiento Transformer (usar --include-transformer para activar)"
+    fi
+}
+
+# Entrenamiento Transformer - opcional
+run_transformer_training() {
+    if [[ $1 == "--include-transformer" ]]; then
+        print_status "🤖 Iniciando entrenamiento Transformer..."
+        
+        docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up transformer-trainer
+        
+        print_success "Entrenamiento Transformer completado"
+    else
+        print_warning "Omitiendo entrenamiento Transformer (usar --include-transformer para activar)"
+    fi
+}
+
 # Entrenamiento PyTorch (Mamba) - opcional
 run_pytorch_training() {
     if [[ $1 == "--include-mamba" ]]; then
@@ -195,14 +221,18 @@ show_help() {
     echo "  --build-only           Solo construir imágenes Docker"
     echo "  --preprocess-only      Solo procesar datos"
     echo "  --train-only           Solo entrenar modelos"
+    echo "  --include-transformer Incluir entrenamiento Transformer"
     echo "  --include-mamba        Incluir entrenamiento Mamba (PyTorch)"
+    echo "  --include-all          Incluir todos los modelos (Transformer + Mamba)"
     echo "  --results-only         Solo generar resultados para paper"
     echo "  --cleanup              Limpiar recursos Docker"
     echo ""
     echo "Ejemplos:"
     echo "  $0                     Pipeline completo"
     echo "  $0 --train-only       Solo entrenamiento"
+    echo "  $0 --include-transformer Pipeline completo con Transformer"
     echo "  $0 --include-mamba    Pipeline completo con Mamba"
+    echo "  $0 --include-all      Pipeline completo con todos los modelos"
     echo "  $0 --results-only      Generar resultados para paper"
 }
 
@@ -249,7 +279,15 @@ main() {
         --include-mamba)
             INCLUDE_MAMBA=true
             ;;
+        --include-transformer)
+            INCLUDE_TRANSFORMER=true
+            ;;
+        --include-all)
+            INCLUDE_TRANSFORMER=true
+            INCLUDE_MAMBA=true
+            ;;
         "")
+            INCLUDE_TRANSFORMER=false
             INCLUDE_MAMBA=false
             ;;
         *)
@@ -267,7 +305,8 @@ main() {
     build_docker_images
     prepare_data
     run_training
-    run_pytorch_training "--include-mamba"
+    run_transformer_training $1
+    run_pytorch_training $1
     generate_results
     show_results
     
