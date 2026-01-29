@@ -31,30 +31,30 @@ services:
     restart: "no"
 
   # =============================================================
-  # PyTorch Trainer (Experimental - Mamba SSM)
+  # PyTorch Trainer (Experimental - Mamba SSM) - DISABLED
   # =============================================================
-  torch-trainer:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.torch
-    image: weather_thesis:torch
-    container_name: weather_torch_trainer
-    volumes:
-      - ./data:/app/data
-      - ./experiments:/app/experiments
-    environment:
-      - PYTHONUNBUFFERED=1
-      - CUDA_VISIBLE_DEVICES=0
-    # GPU support for NVIDIA Docker
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    command: python scripts/train_torch.py
-    restart: "no"
+  # torch-trainer:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/Dockerfile.torch
+  #   image: weather_thesis:torch
+  #   container_name: weather_torch_trainer
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./experiments:/app/experiments
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
+  #     - CUDA_VISIBLE_DEVICES=0
+  #   # GPU support for NVIDIA Docker
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   command: python scripts/train_torch.py
+  #   restart: "no"
 
   # =============================================================
   # Data Preprocessing (One-time setup)
