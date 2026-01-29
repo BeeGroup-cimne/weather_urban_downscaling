@@ -18,14 +18,15 @@ services:
     environment:
       - TF_USE_LEGACY_KERAS=1
       - PYTHONUNBUFFERED=1
-    # Uncomment for GPU support (requires nvidia-docker)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+      - CUDA_VISIBLE_DEVICES=0
+    # GPU support for NVIDIA Docker
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     command: python scripts/run_ablation.py
     restart: "no"
 
@@ -43,14 +44,15 @@ services:
       - ./experiments:/app/experiments
     environment:
       - PYTHONUNBUFFERED=1
-    # Uncomment for GPU support (requires nvidia-docker)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+      - CUDA_VISIBLE_DEVICES=0
+    # GPU support for NVIDIA Docker
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     command: python scripts/train_torch.py
     restart: "no"
 

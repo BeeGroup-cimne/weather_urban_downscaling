@@ -6,7 +6,7 @@ import pandas as pd
 # --- DATOS DEL CRONOGRAMA ---
 tasks = [
     # AÑO 1: INGENIERÍA
-    dict(Task="Revisión Bibliográfica (SOTA)", Start='2026-01-01', Finish='2026-06-30', Phase='Año 1: Fundamentos'),
+    dict(Task="Revisión Bibliográfica (SOTA)", Start='2025-10-01', Finish='2026-03-30', Phase='Año 1: Fundamentos'),
     dict(Task="Ingeniería de Datos (Zarr/ERA5)", Start='2026-03-01', Finish='2026-09-30', Phase='Año 1: Fundamentos'),
     dict(Task="Dockerización (Dual Engine)", Start='2026-04-01', Finish='2026-07-30', Phase='Año 1: Fundamentos'),
     dict(Task="Baseline U-Net (TensorFlow)", Start='2026-08-01', Finish='2026-12-31', Phase='Año 1: Fundamentos'),

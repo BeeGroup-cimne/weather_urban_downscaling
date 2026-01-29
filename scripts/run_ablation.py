@@ -19,7 +19,7 @@ sys.path.append(PROJECT_ROOT)
 from src.models_legacy import ModelZoo # <--- Usamos Legacy Models (ReLU, No-BN)
 from src.data_loader import BigDataPipeline # <--- Usamos el Data Loader completo
 from src.utils import run_experiment, visualize_results, notify_completion, plot_comparative_history
-from config.config import Config
+from config.gpu_server_config import GPUServerConfig as Config
 
 # --- CONFIGURACIÓN DE EXPERIMENTOS ---
 # Mapeo de nombres a métodos de construcción en ModelZoo

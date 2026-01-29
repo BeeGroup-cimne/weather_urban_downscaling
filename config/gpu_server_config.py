@@ -187,12 +187,13 @@ class GPUServerConfig:
             if gpus:
                 for gpu in gpus:
                     tf.config.experimental.set_memory_growth(gpu, True)
-                    tf.config.experimental.set_virtual_device_configuration(
-                        gpu,
-                        [tf.config.experimental.VirtualDeviceConfiguration(
-                            memory_limit=int(cls.GPU_MEMORY_FRACTION * cls.GPU_MEMORY_GB * 1024)
-                        )]
-                    )
+                        if cls.GPU_MEMORY_GB is not None:
+                            tf.config.experimental.set_virtual_device_configuration(
+                                gpu,
+                                [tf.config.experimental.VirtualDeviceConfiguration(
+                                    memory_limit=int(cls.GPU_MEMORY_FRACTION * cls.GPU_MEMORY_GB * 1024)
+                                )]
+                            )
                 print(f"✅ GPU memory configurada para {cls.GPU_MEMORY_FRACTION * 100}% de {cls.GPU_MEMORY_GB}GB")
         except Exception as e:
             print(f"⚠️ Error configurando GPU memory: {e}")
