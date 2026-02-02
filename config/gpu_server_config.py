@@ -139,9 +139,10 @@ class GPUServerConfig:
     PREFETCH_BUFFER_SIZE = 2  # Buffer pequeño para evitar acumulación
     SHUFFLE_BUFFER_SIZE = 100  # Shuffle buffer reducido
     
-    # Memory monitoring
+     # Memory monitoring
     MEMORY_MONITORING = True
     GPU_MEMORY_FRACTION = 0.9  # Usar 90% de GPU memory
+    SPLIT_FRACTION = 0.8  # Fraction for train/validation split
     
     # Checkpointing y recuperación
     ENABLE_CHECKPOINTING = True
