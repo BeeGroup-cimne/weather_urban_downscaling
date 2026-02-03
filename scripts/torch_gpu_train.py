@@ -18,7 +18,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.extend([parent_dir, os.path.join(parent_dir, 'src')])
 
-from config.gpu_server_config import GPUServerConfig as Config
+from config.runtime import Config
 from src.torch_engine.model_mamba import DownsrUNetMamba
 from src.data_loader import BigDataPipeline
 from src.losses import TorchHybridLoss
@@ -132,6 +132,9 @@ class ZarrIterableDataset(IterableDataset):
 
 def train_gpu():
     print("🚀 Iniciando entrenamiento Mamba (PyTorch GPU)...")
+    
+    if not hasattr(Config, "GPU_MEMORY_GB"):
+        raise RuntimeError("GPU config requerido. Exporta USE_GPU_CONFIG=1 antes de ejecutar.")
     
     device = torch.device(
         "cuda" if torch.cuda.is_available() else

@@ -2,7 +2,7 @@ import os
 import tensorflow as tf
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger
 import xarray as xr
-from config.config import Config
+from config.runtime import Config
 from src.data_loader import BigDataPipeline
 from src.models import ModelZoo
 from src.utils import notify_completion, plot_comparative_history , run_experiment , visualize_results

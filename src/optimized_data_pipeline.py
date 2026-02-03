@@ -18,7 +18,7 @@ except ImportError:
     psutil = None
 
 # Importar configuración
-from config.gpu_server_config import GPUServerConfig as Config
+from config.runtime import Config
 
 class OptimizedBigDataPipeline:
     def __init__(self, config=None):

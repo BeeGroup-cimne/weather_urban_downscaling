@@ -18,7 +18,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.extend([parent_dir, os.path.join(parent_dir, 'src')])
 
-from config.config import Config
+from config.runtime import Config
 from train import BigDataPipeline
 
 class ModelEvaluator:

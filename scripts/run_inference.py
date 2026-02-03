@@ -6,7 +6,7 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
 import tensorflow as tf
-from config.config import Config
+from config.runtime import Config
 from train import BigDataPipeline
 from src.utils import visualize_results
 

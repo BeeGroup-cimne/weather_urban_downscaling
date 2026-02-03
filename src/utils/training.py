@@ -6,8 +6,21 @@ import numpy as np
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger
-from config.config import Config
+from config.runtime import Config
 from tensorflow.keras.utils import plot_model
+
+def resolve_stats_path():
+    """Resolver ruta de stats de forma robusta."""
+    candidates = [
+        getattr(Config, "STATS_PATH", None),
+        os.path.join("data", "processed", "stats_config.npz"),
+        os.path.join("scripts", "stats_config.npz"),
+        "stats_config.npz"
+    ]
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return None
 
 def notify_completion(message="Proceso finalizado"):
     timestamp = datetime.datetime.now().strftime("%H:%M:%S")
@@ -129,12 +142,13 @@ def visualize_results(model, val_ds, title):
         # Extraer un batch para visualizar
         (x_lr, x_st), y_true = next(iter(val_ds))
 
-        # --- 🛑 CORRECCIÓN DE RUTA STATS 🛑 ---
-        stats_path = Config.STATS_PATH
-            
+        stats_path = resolve_stats_path()
+        if not stats_path:
+            print("⚠️ No se encontró stats_config.npz. Saltando visualización.")
+            return
+        
         print(f"   📊 Cargando estadísticas desde: {stats_path}")
         stats = np.load(stats_path)
-        # --------------------------------------
 
         
         # Predecir

@@ -45,6 +45,12 @@ Before running the deployment script, you **must** place your datasets in the fo
 > [!IMPORTANT]
 > The automated pipeline looks for these files to generate the training cache. If they are missing, the `data-prep` step will fail.
 
+### 2.1 Data Health Check (Recommended)
+After preprocessing, validate the cache:
+```bash
+python scripts/check_data_health.py
+```
+
 ### 3. Verify GPU Support
 ```bash
 # Check NVIDIA drivers

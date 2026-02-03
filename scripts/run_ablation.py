@@ -19,9 +19,8 @@ sys.path.append(PROJECT_ROOT)
 from src.models_legacy import ModelZoo # <--- Usamos Legacy Models (ReLU, No-BN)
 from src.data_loader import BigDataPipeline # <--- Usamos el Data Loader completo
 from src.utils import run_experiment, visualize_results, notify_completion, plot_comparative_history
-from config.gpu_server_config import GPUServerConfig as Config
+from config.runtime import Config
 from src.losses import tf_hybrid_loss
-from config import config as BaseConfig
 
 # --- CONFIGURACIÓN DE EXPERIMENTOS ---
 # Mapeo de nombres a métodos de construcción en ModelZoo
@@ -35,11 +34,6 @@ EXPERIMENTS_TO_RUN = {
 combined_loss = tf_hybrid_loss(alpha=0.8, max_val=5.0)
 
 def main():
-    # Sincronizar parámetros clave con el Config base usado por run_experiment
-    BaseConfig.Config.EPOCHS = Config.EPOCHS
-    BaseConfig.Config.MAX_STEPS_PER_EPOCH = Config.MAX_STEPS_PER_EPOCH
-    BaseConfig.Config.BATCH_SIZE = Config.BATCH_SIZE
-
     print(f"\n🚀 INICIANDO ESTUDIO DE ABLACIÓN (Alineado con train.py)")
     print(f"   ⚡ Hardware: {Config.DEVICE}")
     

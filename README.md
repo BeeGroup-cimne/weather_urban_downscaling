@@ -90,7 +90,7 @@ data/
 │   ├── estaciones_interpoladas_final.nc   # HR target (interpolated stations)
 │   ├── weather_static_FINAL_stations.zarr/ # Static features (buildings, etc.)
 │   └── era5land/
-│       └── lr_2010_2025.grib              # LR input (ERA5-Land)
+│       └── lr_2017.grib                   # LR input (ERA5-Land)
 └── raw/
     └── weather_stations.zarr/             # Raw station data (optional)
 ```
@@ -203,6 +203,32 @@ docker-compose down
 
 # Remove images
 docker-compose down --rmi all
+```
+
+---
+
+## ⚡ GPU Server Quick Start
+
+1. Preprocess (one-time):
+```bash
+docker-compose -f docker-compose.gpu-optimized.yml --profile preprocessing up data-prep
+```
+
+2. Data health check:
+```bash
+python scripts/check_data_health.py
+```
+
+3. Train (TensorFlow):
+```bash
+docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up tf-trainer
+```
+
+Nota: en GPU se usa automáticamente `config/gpu_server_config.py` vía `USE_GPU_CONFIG=1`.
+
+4. Optional (PyTorch Mamba):
+```bash
+docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up torch-trainer
 ```
 
 ---

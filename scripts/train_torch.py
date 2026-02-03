@@ -14,7 +14,7 @@ sys.path.append(PROJECT_ROOT)
 
 from src.torch_engine.model_mamba import DownsrUNetMamba
 from src.data_loader import BigDataPipeline
-from config.config import Config
+from config.runtime import Config
 from src.losses import TorchHybridLoss
 
 

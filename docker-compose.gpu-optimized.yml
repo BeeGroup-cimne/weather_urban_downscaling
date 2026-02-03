@@ -21,6 +21,7 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - TF_GPU_ALLOCATOR=cuda_malloc_async
       - MPLCONFIGDIR=/tmp
+      - USE_GPU_CONFIG=1
     # GPU support con límites de memoria
     deploy:
       resources:
@@ -68,6 +69,7 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - TF_GPU_ALLOCATOR=cuda_malloc_async
       - MPLCONFIGDIR=/tmp
+      - USE_GPU_CONFIG=1
     deploy:
       resources:
         limits:
@@ -103,6 +105,7 @@ services:
       - MPLCONFIGDIR=/tmp
       - CUDA_VISIBLE_DEVICES=0
       - NCCL_DEBUG=WARN
+      - USE_GPU_CONFIG=1
     deploy:
       resources:
         limits:
@@ -135,6 +138,8 @@ services:
       - ./experiments:/app/experiments
     environment:
       - PYTHONUNBUFFERED=1
+      - MPLCONFIGDIR=/tmp
+      - USE_GPU_CONFIG=1
     deploy:
       resources:
         limits:

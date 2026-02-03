@@ -17,7 +17,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.extend([parent_dir, os.path.join(parent_dir, 'src')])
 
-from config.gpu_server_config import GPUServerConfig as Config
+from config.runtime import Config
 from src.optimized_data_pipeline import OptimizedBigDataPipeline
 from src.models_legacy import ModelZoo
 from src.models.transformer_optimized import build_lightweight_transformer_unet
@@ -29,6 +29,9 @@ class GPUOptimizedTrainer:
         self.config = Config
         self.pipeline = None
         self.models = {}
+        
+        if not hasattr(self.config, "GPU_MEMORY_GB"):
+            raise RuntimeError("GPU config requerido. Exporta USE_GPU_CONFIG=1 antes de ejecutar.")
         
         print(f"🚀 GPU Optimized Trainer inicializado")
         self.config.print_memory_info()
