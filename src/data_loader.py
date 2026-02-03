@@ -134,13 +134,30 @@ class BigDataPipeline:
         
         # 1. Carga Lazy
         ds_hr = xr.open_mfdataset(self.cfg.PATH_HR, chunks={'time': 100}, parallel=True)
-        ds_lr = xr.open_mfdataset(
-            self.cfg.PATH_LR, 
-            engine="cfgrib", 
-            backend_kwargs={"filter_by_keys": {"typeOfLevel": "surface"}, "errors": "ignore"},
-            chunks={'time': 100}, 
-            parallel=True
-        )
+        # LR puede ser un archivo único o un patrón con múltiples GRIB
+        lr_path = self.cfg.PATH_LR
+        cfgrib_kwargs = {
+            "filter_by_keys": {"typeOfLevel": "surface"},
+            "errors": "ignore",
+            # Evitar crear índices .idx persistentes (pueden corromperse)
+            "indexpath": ""
+        }
+        
+        if os.path.isfile(lr_path):
+            ds_lr = xr.open_dataset(
+                lr_path,
+                engine="cfgrib",
+                backend_kwargs=cfgrib_kwargs,
+                chunks={'time': 100}
+            )
+        else:
+            ds_lr = xr.open_mfdataset(
+                lr_path, 
+                engine="cfgrib", 
+                backend_kwargs=cfgrib_kwargs,
+                chunks={'time': 100}, 
+                parallel=True
+            )
 
         # 2. Detección Inteligente de Variable HR (Target)
         hr_var = None
@@ -264,6 +281,16 @@ class BigDataPipeline:
         # to_array crea dims: (variable, time, latitude, longitude)
         ds_lr_arr = ds_lr_clipped.to_array(dim='variable', name='lr_input')
         
+        # --- 🧹 FIX: variables LR completamente vacías (todo NaN) ---
+        try:
+            all_nan = ds_lr_arr.isnull().all(dim=['time', 'latitude', 'longitude'])
+            if bool(all_nan.any()):
+                nan_vars = ds_lr_arr['variable'].values[all_nan.values]
+                print(f"   ⚠️ Variables LR con todo NaN: {list(nan_vars)} -> se rellenan con 0")
+                ds_lr_arr = ds_lr_arr.where(~all_nan, other=0)
+        except Exception as e:
+            print(f"   ⚠️ No se pudo filtrar variables NaN: {e}")
+        
         # --- 🛠️ FIX DE INTERPOLACIÓN MARÍTIMA 🛠️ ---
         print("   🌊 Rellenando NaNs (Estrategia Nearest/Extrapolate)...")
         # Usamos interpolate_na con 'nearest' y extrapolación.
@@ -293,6 +320,20 @@ class BigDataPipeline:
             std_lr = ds_lr_clean.std(dim=['time', 'latitude', 'longitude']).compute()
             mean_hr = ds_hr_clean.mean().compute().item()
             std_hr = ds_hr_clean.std().compute().item()
+        
+        # Guardar estadísticas para visualizaciones
+        try:
+            os.makedirs(os.path.dirname(self.stats_path), exist_ok=True)
+            np.savez(
+                self.stats_path,
+                mean_lr=mean_lr.values,
+                std_lr=std_lr.values,
+                mean_hr=mean_hr,
+                std_hr=std_hr
+            )
+            print(f"   💾 Stats guardadas en: {self.stats_path}")
+        except Exception as e:
+            print(f"   ⚠️ No se pudieron guardar stats: {e}")
 
         ds_lr_norm = (ds_lr_clean - mean_lr) / (std_lr + 1e-6)
         ds_hr_norm = (ds_hr_clean - mean_hr) / (std_hr + 1e-6)

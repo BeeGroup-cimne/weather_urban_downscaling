@@ -15,77 +15,8 @@ sys.path.append(PROJECT_ROOT)
 from src.torch_engine.model_mamba import DownsrUNetMamba
 from src.data_loader import BigDataPipeline
 from config.config import Config
+from src.losses import TorchHybridLoss
 
-# --- SSIM Implementation for PyTorch (Matches tf.image.ssim) ---
-def gaussian_window(size, sigma):
-    coords = torch.arange(size, dtype=torch.float)
-    coords -= size // 2
-    g = torch.exp(-(coords**2) / (2 * sigma**2))
-    g /= g.sum()
-    return g.reshape(1, 1, 1, -1) if size == 1 else g.reshape(1, 1, size, 1) # Simplified 1D guassian
-
-def create_window(window_size, channel):
-    # Create 2D gaussian window
-    _1D_window = gaussian_window(window_size, 1.5).unsqueeze(1)
-    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
-    window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
-    return window
-
-def ssim_torch(img1, img2, window_size=11, size_average=True):
-    # Assumes img1, img2 are (Batch, Channel, Height, Width) or (Batch*Time, C, H, W)
-    channel = img1.size(1)
-    window = create_window(window_size, channel)
-    
-    if img1.is_cuda:
-        window = window.cuda(img1.get_device())
-    window = window.type_as(img1)
-
-    mu1 = F.conv2d(img1, window, padding=window_size//2, groups=channel)
-    mu2 = F.conv2d(img2, window, padding=window_size//2, groups=channel)
-
-    mu1_sq = mu1.pow(2)
-    mu2_sq = mu2.pow(2)
-    mu1_mu2 = mu1*mu2
-
-    sigma1_sq = F.conv2d(img1*img1, window, padding=window_size//2, groups=channel) - mu1_sq
-    sigma2_sq = F.conv2d(img2*img2, window, padding=window_size//2, groups=channel) - mu2_sq
-    sigma12 = F.conv2d(img1*img2, window, padding=window_size//2, groups=channel) - mu1_mu2
-
-    C1 = 0.01**2
-    C2 = 0.03**2
-
-    ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2))/((mu1_sq + mu2_sq + C1)*(sigma1_sq + sigma2_sq + C2))
-
-    if size_average:
-        return ssim_map.mean()
-    else:
-        return ssim_map.mean(1).mean(1).mean(1)
-
-class HybridLoss(nn.Module):
-    def __init__(self, alpha=0.84): # Matches TF default approx
-        super().__init__()
-        self.alpha = alpha
-        self.mse = nn.MSELoss()
-        
-    def forward(self, pred, target):
-        # pred/target: (Batch, Time, H, W) -> flatten Time to SSIM works on frames
-        # Wait, model output is (Batch, Time, 1, H, W).
-        
-        b, t, c, h, w = pred.shape
-        pred_flat = pred.view(-1, c, h, w)
-        target_flat = target.view(-1, c, h, w)
-        
-        mse_loss = self.mse(pred, target)
-        
-        # SSIM expects normalized images roughly [0,1] or similar scale.
-        # But TF code uses max_val=5.0.
-        # We'll rely on the standard implementation.
-        ssim_val = ssim_torch(pred_flat, target_flat, window_size=11)
-        ssim_loss = 1 - ssim_val
-        
-        # TF Alpha was 0.8
-        # TF Alpha was 0.8
-        return (1 - self.alpha) * mse_loss + self.alpha * ssim_loss
 
 # --- Zarr Dataset ---
 class ZarrIterableDataset(IterableDataset):
@@ -210,7 +141,7 @@ def train():
     # 3. Model
     model = DownsrUNetMamba().to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
-    criterion = HybridLoss().to(device)
+    criterion = TorchHybridLoss(alpha=0.84).to(device)
     
     # Test Forward Pass
     print("🧪 Verificando pasang Forward...")

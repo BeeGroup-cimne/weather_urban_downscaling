@@ -18,6 +18,8 @@ from config.config import Config
 # - Se busca primero en data/raw/weather_stations.zarr
 # - Si no existe, se usa la variable de entorno WEATHER_STATIONS_PATH
 # - Fallback a un path por defecto (solo para desarrollo local)
+
+
 PATH_STATIONS_DEFAULT = os.path.join(PROJECT_ROOT, 'data', 'raw', 'weather_stations.zarr')
 PATH_STATIONS = os.environ.get('WEATHER_STATIONS_PATH', PATH_STATIONS_DEFAULT)
 
@@ -46,7 +48,11 @@ def process_stations_final(start_date_str=None, end_date_str=None):
         print("   Por favor, ajusta PATH_STATIONS a la ubicación correcta de tus datos de estaciones.")
         return
     
-    ds = xr.open_dataset(PATH_STATIONS, chunks={'time': 100})
+    # Intentar abrir con zarr primero, luego fallback
+    try:
+        ds = xr.open_zarr(PATH_STATIONS, chunks={'time': 100})
+    except:
+        ds = xr.open_dataset(PATH_STATIONS, chunks={'time': 100})
     
     # Filtro temporal - AHORA CONFIGURABLE
     if start_date_str and end_date_str:
@@ -82,15 +88,90 @@ def process_stations_final(start_date_str=None, end_date_str=None):
 
     # 3. CARGAR GRID TARGET
     print("🗺️  Leyendo rejilla objetivo...")
-    ds_ref = xr.open_dataset(PATH_GRID_REF)
+    ds_ref = None
     
-    target_lat = ds_ref['latitude'].values if 'latitude' in ds_ref else ds_ref['y'].values
-    target_lon = ds_ref['longitude'].values if 'longitude' in ds_ref else ds_ref['x'].values
-    
-    if target_lat.ndim == 1:
-        grid_lon_2d, grid_lat_2d = np.meshgrid(target_lon, target_lat)
+    if os.path.exists(PATH_GRID_REF):
+        ds_ref = xr.open_dataset(PATH_GRID_REF)
     else:
+        # Fallback 1: usar Zarr estático si existe
+        if os.path.exists(Config.PATH_STATIC):
+            print(f"   ⚠️  {PATH_GRID_REF} no existe. Usando {Config.PATH_STATIC} como referencia.")
+            ds_ref = xr.open_zarr(Config.PATH_STATIC)
+        
+        # Fallback 2: usar grilla LR (ERA5-Land GRIB)
+        if ds_ref is None:
+            lr_path = Config.PATH_LR
+            if not os.path.exists(lr_path):
+                # Buscar cualquier .grib en data/processed/era5land
+                era5_dir = os.path.join(PROJECT_ROOT, "data", "processed", "era5land")
+                if os.path.isdir(era5_dir):
+                    gribs = [f for f in os.listdir(era5_dir) if f.endswith(".grib")]
+                    if gribs:
+                        lr_path = os.path.join(era5_dir, gribs[0])
+            
+            if os.path.exists(lr_path):
+                print(f"   ⚠️  Usando grilla LR: {lr_path}")
+                try:
+                    ds_ref = xr.open_dataset(
+                        lr_path,
+                        engine="cfgrib",
+                        backend_kwargs={"filter_by_keys": {"typeOfLevel": "surface"}, "errors": "ignore"}
+                    )
+                except Exception as e:
+                    print(f"❌ ERROR abriendo GRIB LR: {e}")
+                    ds_ref = None
+    
+    if ds_ref is None:
+        print("❌ ERROR: No se encontró archivo de referencia NetCDF, GRIB LR ni Zarr Estático.")
+        return
+
+    # Detectar nombres de coordenadas en la referencia
+    if 'latitude' in ds_ref.coords:
+        target_lat = ds_ref['latitude'].values
+        target_lon = ds_ref['longitude'].values
+    elif 'lat' in ds_ref.coords and 'lon' in ds_ref.coords:
+        target_lat = ds_ref['lat'].values
+        target_lon = ds_ref['lon'].values
+    elif 'y' in ds_ref.coords and 'x' in ds_ref.coords:
+        target_lat = ds_ref['y'].values
+        target_lon = ds_ref['x'].values
+    elif 'index' in ds_ref:
+        # Zarr estático con index plano "lat_lon"
+        print("   ⚠️  Referencia estática sin coords 2D. Generando grilla regular 251x251 desde el bounding box.")
+        indices = ds_ref['index'].values
+        lats_idx = np.array([float(x.split('_')[0]) for x in indices])
+        lons_idx = np.array([float(x.split('_')[1]) for x in indices])
+        
+        lat_min, lat_max = lats_idx.min(), lats_idx.max()
+        lon_min, lon_max = lons_idx.min(), lons_idx.max()
+        
+        h, w = Config.HR_SHAPE
+        lat_1d = np.linspace(lat_min, lat_max, h)
+        lon_1d = np.linspace(lon_min, lon_max, w)
+        grid_lon_2d, grid_lat_2d = np.meshgrid(lon_1d, lat_1d)
+        target_lat, target_lon = grid_lat_2d, grid_lon_2d
+    else:
+        # Fallback a variables si no están en coords
+        if 'latitude' in ds_ref:
+            target_lat = ds_ref['latitude'].values
+            target_lon = ds_ref['longitude'].values
+        elif 'lat' in ds_ref:
+            target_lat = ds_ref['lat'].values
+            target_lon = ds_ref['lon'].values
+        else:
+            target_lat = ds_ref['y'].values
+            target_lon = ds_ref['x'].values
+    
+    if isinstance(target_lat, np.ndarray) and target_lat.ndim == 1:
+        grid_lon_2d, grid_lat_2d = np.meshgrid(target_lon, target_lat)
+    elif isinstance(target_lat, np.ndarray) and target_lat.ndim == 2:
         grid_lat_2d, grid_lon_2d = target_lat, target_lon
+    else:
+        # En caso extremo, forzamos a grilla regular con HR_SHAPE
+        h, w = Config.HR_SHAPE
+        lat_1d = np.linspace(target_lat.min(), target_lat.max(), h)
+        lon_1d = np.linspace(target_lon.min(), target_lon.max(), w)
+        grid_lon_2d, grid_lat_2d = np.meshgrid(lon_1d, lat_1d)
         
     # Verificar solapamiento
     overlap_lat = (st_lat.min() < grid_lat_2d.max()) and (st_lat.max() > grid_lat_2d.min())
@@ -121,12 +202,32 @@ def process_stations_final(start_date_str=None, end_date_str=None):
     # Normalizar
     weights_norm = (weights / weights.sum(axis=1, keepdims=True)).astype(np.float32)
 
+
     # 6. INTERPOLACIÓN
     print("🔄 Interpolando series temporales...")
     
     BATCH_SIZE = 100 
     n_total_times = len(ds_subset.time)
-    temp_dask = ds_subset['airTemperature'].chunk({'time': 100, 'weatherStation': -1})
+    
+    # Detectar variable de temperatura
+    hr_var = None
+    for v in ['airTemperature', 'tas', 't2m', 'temp']:
+        if v in ds_subset:
+            hr_var = v
+            break
+    if hr_var is None:
+        hr_var = list(ds_subset.data_vars)[0]
+        print(f"   ⚠️ Variable estándar no encontrada. Usando '{hr_var}'")
+    
+    print(f"   🌡️ Usando variable: {hr_var}")
+    temp_dask = ds_subset[hr_var].chunk({'time': 100})
+    
+    # Detectar nombre de dimensión de estaciones
+    st_dim = 'weatherStation' if 'weatherStation' in temp_dask.dims else 'station'
+    if st_dim not in temp_dask.dims:
+        st_dim = temp_dask.dims[-1] # Asumimos que la última es la de estaciones
+    
+    temp_dask = temp_dask.chunk({st_dim: -1})
     
     result_list = []
     
@@ -171,6 +272,7 @@ def process_stations_final(start_date_str=None, end_date_str=None):
     
     # Conversión final de unidades si fuera necesario (Kelvin -> Celsius ya parece estar hecho en input -0.6 a 5.8)
     # Si los datos de entrada son Celsius, perfecto. Si el modelo espera Kelvin, sumar 273.15 aquí.
+
     
     print(f"💾 Guardando: {local_output}")
     ds_final.to_netcdf(local_output)

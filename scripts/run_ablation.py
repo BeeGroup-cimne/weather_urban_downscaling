@@ -20,6 +20,8 @@ from src.models_legacy import ModelZoo # <--- Usamos Legacy Models (ReLU, No-BN)
 from src.data_loader import BigDataPipeline # <--- Usamos el Data Loader completo
 from src.utils import run_experiment, visualize_results, notify_completion, plot_comparative_history
 from config.gpu_server_config import GPUServerConfig as Config
+from src.losses import tf_hybrid_loss
+from config import config as BaseConfig
 
 # --- CONFIGURACIÓN DE EXPERIMENTOS ---
 # Mapeo de nombres a métodos de construcción en ModelZoo
@@ -30,21 +32,14 @@ EXPERIMENTS_TO_RUN = {
 }
 
 # --- 🧠 FÍSICA: FUNCIÓN DE PÉRDIDA HÍBRIDA (TAO LOSS) ---
-# Recuperada de tu train.py original.
-def combined_loss(y_true, y_pred):
-    # 1. Error de Valores (MSE)
-    mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred)
-    
-    # 2. Error de Estructura (SSIM)
-    # max_val=5.0 asume que los datos están normalizados (aprox -2.5 a 2.5 sigmas)
-    ssim_loss = 1 - tf.reduce_mean(tf.image.ssim(y_true, y_pred, max_val=5.0))
-    
-    # 3. Combinación Ponderada
-    # Alpha alto (0.8) prioriza que el mapa "se vea bien" (bordes definidos)
-    alpha = 0.8
-    return (1 - alpha) * mse + alpha * ssim_loss
+combined_loss = tf_hybrid_loss(alpha=0.8, max_val=5.0)
 
 def main():
+    # Sincronizar parámetros clave con el Config base usado por run_experiment
+    BaseConfig.Config.EPOCHS = Config.EPOCHS
+    BaseConfig.Config.MAX_STEPS_PER_EPOCH = Config.MAX_STEPS_PER_EPOCH
+    BaseConfig.Config.BATCH_SIZE = Config.BATCH_SIZE
+
     print(f"\n🚀 INICIANDO ESTUDIO DE ABLACIÓN (Alineado con train.py)")
     print(f"   ⚡ Hardware: {Config.DEVICE}")
     
@@ -77,6 +72,11 @@ def main():
     except Exception as e:
         print(f"❌ Error cargando datos: {e}")
         sys.exit(1)
+    
+    # Smoke test: limitar pasos si está configurado
+    if getattr(Config, "MAX_STEPS_PER_EPOCH", None):
+        train_ds = train_ds.take(Config.MAX_STEPS_PER_EPOCH)
+        val_ds = val_ds.take(max(1, Config.MAX_STEPS_PER_EPOCH // 2))
     # =========================================================================
 
     # 2. BUCLE DE EXPERIMENTOS

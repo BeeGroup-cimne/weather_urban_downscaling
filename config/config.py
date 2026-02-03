@@ -33,13 +33,12 @@ class Config:
     # ---------------------------------------------------------
     # 2. RUTAS DE ARCHIVOS (Dinámicas - Relativas al proyecto)
     # ---------------------------------------------------------
-    
     # Directorio raíz del proyecto (carpeta que contiene 'config' y 'data')
     BASE_DIR = Path(__file__).resolve().parent.parent
 
     # Rutas de datos de entrada
     PATH_HR = str(BASE_DIR / "data" / "processed" / "estaciones_interpoladas_final.nc")
-    PATH_LR = str(BASE_DIR / "data" / "processed" / "era5land" / "lr_2010_2025.grib")
+    PATH_LR = str(BASE_DIR / "data" / "processed" / "era5land" / "lr_2017.grib")
     PATH_STATIC = str(BASE_DIR / "data" / "processed" / "weather_static_FINAL_stations.zarr")
     PATH_CACHE = str(BASE_DIR / "data" / "processed" / "weather_cache.zarr")
 

@@ -12,7 +12,10 @@ import tensorflow as tf
 from dask.diagnostics import ProgressBar
 from typing import Tuple, Optional
 import gc
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # Importar configuración
 from config.gpu_server_config import GPUServerConfig as Config
@@ -30,6 +33,15 @@ class OptimizedBigDataPipeline:
         print(f"   Batch Size: {self.config.BATCH_SIZE}")
         print(f"   Chunk Size: {self.config.ZARR_CHUNK_SIZE}")
         
+        # Cargar cache estático si existe
+        if os.path.exists(self.config.STATIC_CACHE_PATH):
+            try:
+                self.static_processed = np.load(self.config.STATIC_CACHE_PATH)
+                print(f"✅ Static cache cargado: {self.config.STATIC_CACHE_PATH}")
+            except Exception as e:
+                print(f"⚠️ Error cargando static cache: {e}")
+                self.static_processed = None
+        
     def monitor_memory(self, stage: str):
         """Monitor memory usage con logging"""
         gpu_memory = 0
@@ -41,63 +53,43 @@ class OptimizedBigDataPipeline:
         except:
             pass
             
-        cpu_memory = psutil.virtual_memory().percent
+        cpu_memory = psutil.virtual_memory().percent if psutil else None
         self.memory_peak = max(self.memory_peak, gpu_memory)
         
-        print(f"📊 [{stage}] GPU: {gpu_memory:.2f}GB, CPU: {cpu_memory}% (Peak GPU: {self.memory_peak:.2f}GB)")
+        if cpu_memory is None:
+            print(f"📊 [{stage}] GPU: {gpu_memory:.2f}GB (Peak GPU: {self.memory_peak:.2f}GB)")
+        else:
+            print(f"📊 [{stage}] GPU: {gpu_memory:.2f}GB, CPU: {cpu_memory}% (Peak GPU: {self.memory_peak:.2f}GB)")
         
     def process_static_data(self):
-        """Procesamiento de datos estáticos con broadcasting eficiente"""
+        """Procesamiento de datos estáticos con lógica robusta (reusa pipeline base)."""
         print("🏗️ Procesando datos estáticos (optimizado)...")
         
+        # 1) Si ya existe cache, úsalo
+        if os.path.exists(self.config.STATIC_CACHE_PATH):
+            try:
+                self.static_processed = np.load(self.config.STATIC_CACHE_PATH)
+                print(f"✅ Static cache cargado: {self.config.STATIC_CACHE_PATH}")
+                return
+            except Exception as e:
+                print(f"⚠️ Error cargando static cache: {e}")
+        
+        # 2) Fallback: generar cache usando el pipeline base (interpolación robusta)
         try:
-            # Usar chunking para archivos grandes
-            ds = xr.open_zarr(
-                self.config.PATH_STATIC,
-                chunks={dim: self.config.ZARR_CHUNK_SIZE for dim in ['lat', 'lon']}
-            )
+            print("🧩 Generando static cache con BigDataPipeline base...")
+            from src.data_loader import BigDataPipeline as BasePipeline
+            base_pipeline = BasePipeline(self.config)
+            base_pipeline.process_static_data()
             
-            # Seleccionar variables estáticas clave para reducir memoria
-            static_vars = [
-                'building_height', 'building_area_residential', 
-                'building_area_industrial', 'sky_view_factor',
-                'surface_roughness', 'street_width', 'elevation'
-            ]
-            
-            # Filtrar variables que existen
-            available_vars = [var for var in static_vars if var in ds.variables]
-            ds_static = ds[available_vars]
-            
-            # Procesar en chunks para evitar OOM
-            chunks_processed = []
-            for i in range(0, len(ds_static.lat), self.config.ZARR_CHUNK_SIZE):
-                lat_chunk = slice(i, min(i + self.config.ZARR_CHUNK_SIZE, len(ds_static.lat)))
-                
-                for j in range(0, len(ds_static.lon), self.config.ZARR_CHUNK_SIZE):
-                    lon_chunk = slice(j, min(j + self.config.ZARR_CHUNK_SIZE, len(ds_static.lon)))
-                    
-                    chunk = ds_static.isel(lat=lat_chunk, lon=lon_chunk).compute()
-                    chunks_processed.append(chunk)
-                    
-                    # Limpiar memoria
-                    del chunk
-                    gc.collect()
-            
-            # Combinar chunks
-            ds_static = xr.concat([xr.concat(chunks_processed[i::len(ds_static.lon)//self.config.ZARR_CHUNK_SIZE], 
-                                        dim='lon') 
-                                 for i in range(len(ds_static.lat)//self.config.ZARR_CHUNK_SIZE)], dim='lat')
-            
-            self.monitor_memory("Static Load")
-            
-            # Normalización
-            static_norm = self._normalize_static_data(ds_static)
-            self.static_processed = static_norm
-            self.monitor_memory("Static Norm")
-            
-            # Guardar processed data
-            np.save(self.config.STATIC_CACHE_PATH, static_norm)
-            print(f"✅ Datos estáticos guardados en {self.config.STATIC_CACHE_PATH}")
+            if os.path.exists(self.config.STATIC_CACHE_PATH):
+                self.static_processed = np.load(self.config.STATIC_CACHE_PATH)
+                print(f"✅ Static cache generado: {self.config.STATIC_CACHE_PATH}")
+            else:
+                # Último fallback: usar los datos procesados en memoria
+                self.static_processed = base_pipeline.ds_static_single
+                if self.static_processed is not None:
+                    np.save(self.config.STATIC_CACHE_PATH, self.static_processed)
+                    print(f"✅ Static cache guardado: {self.config.STATIC_CACHE_PATH}")
             
         except Exception as e:
             print(f"❌ Error procesando datos estáticos: {e}")
@@ -127,7 +119,7 @@ class OptimizedBigDataPipeline:
         return static_norm.astype(np.float32)
     
     def get_tf_datasets(self) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
-        """Crear TensorFlow datasets con optimización de memoria"""
+        """Crear TensorFlow datasets con optimización de memoria (streaming)"""
         print("📦 Creando TF datasets optimizados...")
         
         try:
@@ -139,12 +131,41 @@ class OptimizedBigDataPipeline:
             
             self.monitor_memory("Dynamic Load")
             
-            # Extraer arrays
-            lr_data = ds['lr_features'].values.astype(np.float32)
-            hr_data = ds['hr_target'].values.astype(np.float32)
+            # Analizar dims de LR/HR
+            da_lr = ds['lr_input']
+            da_hr = ds['hr_target']
             
-            print(f"📊 Shapes: LR={lr_data.shape}, HR={hr_data.shape}")
-            self.monitor_memory("Arrays Ready")
+            lr_dims = list(da_lr.dims)
+            lr_time = next((d for d in lr_dims if d in ['time', 'valid_time', 't']), 'time')
+            lr_lat = next((d for d in lr_dims if d in ['latitude', 'lat', 'y']), 'y')
+            lr_lon = next((d for d in lr_dims if d in ['longitude', 'lon', 'x']), 'x')
+            lr_var = next((d for d in lr_dims if d in ['variable', 'channel', 'var']), None)
+            
+            # Ajustar configuración LR/CHANNELS
+            real_lr_h = da_lr.sizes[lr_lat]
+            real_lr_w = da_lr.sizes[lr_lon]
+            if lr_var:
+                real_lr_c = da_lr.sizes[lr_var]
+            else:
+                real_lr_c = 1
+            
+            if self.config.LR_SHAPE != (real_lr_h, real_lr_w):
+                print(f"⚠️ LR_SHAPE: {self.config.LR_SHAPE} -> ({real_lr_h}, {real_lr_w})")
+                self.config.LR_SHAPE = (real_lr_h, real_lr_w)
+            if self.config.CHANNELS != real_lr_c:
+                print(f"⚠️ CHANNELS: {self.config.CHANNELS} -> {real_lr_c}")
+                self.config.CHANNELS = real_lr_c
+            
+            hr_dims = list(da_hr.dims)
+            hr_time = next((d for d in hr_dims if d in ['time', 'valid_time', 't']), 'time')
+            hr_y = next((d for d in hr_dims if d in ['y', 'latitude', 'lat']), 'y')
+            hr_x = next((d for d in hr_dims if d in ['x', 'longitude', 'lon']), 'x')
+            
+            real_hr_h = da_hr.sizes[hr_y]
+            real_hr_w = da_hr.sizes[hr_x]
+            if self.config.HR_SHAPE != (real_hr_h, real_hr_w):
+                print(f"⚠️ HR_SHAPE: {self.config.HR_SHAPE} -> ({real_hr_h}, {real_hr_w})")
+                self.config.HR_SHAPE = (real_hr_h, real_hr_w)
             
             # Cargar datos estáticos
             if self.static_processed is None:
@@ -154,38 +175,81 @@ class OptimizedBigDataPipeline:
                     print("⚠️ Cache estático no encontrado, procesando desde cero...")
                     self.process_static_data()
             
-            # Preparar datos para sequences
-            sequences_x, sequences_y = self._prepare_sequences_efficient(
-                lr_data, hr_data, self.static_processed
-            )
+            if self.static_processed is None:
+                raise RuntimeError("❌ No se pudo cargar datos estáticos.")
             
-            self.monitor_memory("Sequences Ready")
+            # Normalizar estáticos
+            static_data = self.static_processed
+            if static_data.ndim == 2:
+                static_data = static_data[..., np.newaxis]
             
-            # Limpiar memoria grande
-            del lr_data, hr_data
-            gc.collect()
+            mean_st = np.mean(static_data, axis=(0, 1), keepdims=True)
+            std_st = np.std(static_data, axis=(0, 1), keepdims=True)
+            static_norm = (static_data - mean_st) / (std_st + 1e-6)
             
-            # Split
-            split_idx = int(len(sequences_x) * self.config.SPLIT_FRACTION)
+            # Ajustar canales estáticos si difieren
+            if static_norm.shape[-1] != self.config.STATIC_CHANNELS:
+                print(f"⚠️ STATIC_CHANNELS: {self.config.STATIC_CHANNELS} -> {static_norm.shape[-1]}")
+                self.config.STATIC_CHANNELS = static_norm.shape[-1]
             
-            train_x = sequences_x[:split_idx]
-            train_y = sequences_y[:split_idx]
-            val_x = sequences_x[split_idx:]
-            val_y = sequences_y[split_idx:]
+            if static_norm.shape[0] != self.config.HR_SHAPE[0] or static_norm.shape[1] != self.config.HR_SHAPE[1]:
+                print(f"⚠️ Static shape {static_norm.shape[:2]} no coincide con HR_SHAPE {self.config.HR_SHAPE}")
             
-            self.monitor_memory("Data Split")
+            total_len = ds.sizes[lr_time]
+            split_idx = int(total_len * self.config.SPLIT_FRACTION)
+            seq_len = self.config.SEQ_LEN
             
-            # Crear TF datasets con optimización
-            train_ds = self._create_optimized_dataset(train_x, train_y, training=True)
-            val_ds = self._create_optimized_dataset(val_x, val_y, training=False)
+            # Generador streaming para evitar OOM
+            def generator(start_i, end_i):
+                for i in range(start_i, end_i - seq_len):
+                    if lr_var:
+                        x_lr = da_lr.isel({lr_time: slice(i, i + seq_len)}) \
+                            .transpose(lr_time, lr_lat, lr_lon, lr_var) \
+                            .values
+                    else:
+                        x_lr = da_lr.isel({lr_time: slice(i, i + seq_len)}) \
+                            .transpose(lr_time, lr_lat, lr_lon) \
+                            .values
+                        if x_lr.ndim == 3:
+                            x_lr = x_lr[..., np.newaxis]
+                    
+                    y_hr = da_hr.isel({hr_time: slice(i, i + seq_len)}) \
+                        .transpose(hr_time, hr_y, hr_x) \
+                        .values
+                    if y_hr.ndim == 3:
+                        y_hr = y_hr[..., np.newaxis]
+                    
+                    x_st = np.broadcast_to(
+                        static_norm[np.newaxis, ...],
+                        (seq_len, *static_norm.shape)
+                    )
+                    
+                    yield (x_lr, x_st), y_hr
             
-            # Limpiar más memoria
-            del sequences_x, sequences_y
-            gc.collect()
+            # Output signatures
+            lr_h, lr_w = self.config.LR_SHAPE
+            st_h, st_w = self.config.HR_SHAPE
+            n_channels = self.config.CHANNELS
             
-            self.monitor_memory("Final Datasets")
+            spec_lr = tf.TensorSpec(shape=(seq_len, lr_h, lr_w, n_channels), dtype=tf.float32)
+            spec_st = tf.TensorSpec(shape=(seq_len, st_h, st_w, self.config.STATIC_CHANNELS), dtype=tf.float32)
+            spec_hr = tf.TensorSpec(shape=(seq_len, st_h, st_w, 1), dtype=tf.float32)
             
-            print(f"✅ Datasets creados: Train={len(train_x)}, Val={len(val_x)}")
+            shuffle_buf = getattr(self.config, "SHUFFLE_BUFFER_SIZE", 100)
+            prefetch_buf = getattr(self.config, "PREFETCH_BUFFER_SIZE", 2)
+            
+            train_ds = tf.data.Dataset.from_generator(
+                lambda: generator(0, split_idx),
+                output_signature=((spec_lr, spec_st), spec_hr)
+            ).shuffle(shuffle_buf).batch(self.config.BATCH_SIZE, drop_remainder=True) \
+             .prefetch(prefetch_buf)
+            
+            val_ds = tf.data.Dataset.from_generator(
+                lambda: generator(split_idx, total_len),
+                output_signature=((spec_lr, spec_st), spec_hr)
+            ).batch(self.config.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
+            
+            print(f"✅ Datasets creados: Train/Val streaming")
             return train_ds, val_ds
             
         except Exception as e:
@@ -197,11 +261,15 @@ class OptimizedBigDataPipeline:
         print("🔄 Preparando secuencias (broadcasting eficiente)...")
         
         seq_len = self.config.SEQ_LEN
-        sequences_x = []
+        sequences_lr = []
+        sequences_st = []
         sequences_y = []
         
         # Limitar cantidad de secuencias para evitar OOM en debugging
-        max_sequences = min(1000, len(lr_data) - seq_len + 1)
+        max_sequences_cfg = getattr(self.config, "MAX_SEQUENCES", None)
+        max_sequences = len(lr_data) - seq_len + 1
+        if max_sequences_cfg is not None:
+            max_sequences = min(max_sequences_cfg, max_sequences)
         
         for i in range(max_sequences):
             try:
@@ -210,24 +278,20 @@ class OptimizedBigDataPipeline:
                 
                 # Broadcasting eficiente de datos estáticos
                 # Evitar np.repeat que duplica memoria
-                static_shape = static_norm.shape
-                static_resized = np.resize(static_norm, (static_shape[0], static_shape[1], static_shape[2]))
-                
-                # Expandir a secuencia sin duplicar datos
-                x_static = np.broadcast_to(static_resized[np.newaxis, ...], 
-                                         (seq_len, *static_resized.shape))
-                
-                # Concatenar
-                x_sequence = np.concatenate([x_dynamic, x_static], axis=-1)
+                x_static = np.broadcast_to(
+                    static_norm[np.newaxis, ...],
+                    (seq_len, *static_norm.shape)
+                )
                 
                 # Target
-                y_sequence = hr_data[i+seq_len-1]  # Último timestep como target
+                y_sequence = hr_data[i:i+seq_len]  # Secuencia completa como target
                 
-                sequences_x.append(x_sequence.astype(np.float32))
+                sequences_lr.append(x_dynamic.astype(np.float32))
+                sequences_st.append(x_static.astype(np.float32))
                 sequences_y.append(y_sequence.astype(np.float32))
                 
                 # Limpiar variables temporales
-                del x_dynamic, x_static, x_sequence, y_sequence
+                del x_dynamic, x_static, y_sequence
                 
                 if i % 100 == 0:
                     print(f"   Procesadas {i}/{max_sequences} secuencias...")
@@ -237,11 +301,11 @@ class OptimizedBigDataPipeline:
                 print(f"⚠️ Error en secuencia {i}: {e}")
                 continue
         
-        return np.array(sequences_x), np.array(sequences_y)
+        return np.array(sequences_lr), np.array(sequences_st), np.array(sequences_y)
     
-    def _create_optimized_dataset(self, x_data, y_data, training=True):
+    def _create_optimized_dataset(self, x_lr, x_st, y_data, training=True):
         """Crear TF dataset con configuración de memoria optimizada"""
-        dataset = tf.data.Dataset.from_tensor_slices((x_data, y_data))
+        dataset = tf.data.Dataset.from_tensor_slices(((x_lr, x_st), y_data))
         
         if training:
             # Shuffle con buffer pequeño para ahorrar memoria

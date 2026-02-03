@@ -89,7 +89,7 @@ class GPUServerConfig:
     BASE_DIR = Path(__file__).resolve().parent.parent
     
     PATH_HR = str(BASE_DIR / "data" / "processed" / "estaciones_interpoladas_final.nc")
-    PATH_LR = str(BASE_DIR / "data" / "processed" / "era5land" / "lr_2010_2025.grib")
+    PATH_LR = str(BASE_DIR / "data" / "processed" / "era5land" / "lr_2017.grib")
     PATH_STATIC = str(BASE_DIR / "data" / "processed" / "weather_static_FINAL_stations.zarr")
     PATH_CACHE = str(BASE_DIR / "data" / "processed" / "weather_cache.zarr")
     
@@ -150,6 +150,9 @@ class GPUServerConfig:
     
     # Early stopping más agresivo
     EARLY_STOPPING_PATIENCE = 10
+    
+    # Limitar pasos por época (None = usar todo el dataset)
+    MAX_STEPS_PER_EPOCH = None
     
     # ==========================================================
     # CONFIGURACIÓN DE DOCKER Y ENTORNO

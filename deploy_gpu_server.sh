@@ -93,7 +93,7 @@ prepare_data() {
     print_status "Verificando datos de entrada..."
     
     # Verificar archivos crudos
-    if [[ ! -f "data/processed/weather_cache.zarr" ]]; then
+    if [[ ! -d "data/processed/weather_cache.zarr" ]]; then
         print_warning "Datos procesados no encontrados. Ejecutando preprocessing..."
         
         docker-compose -f docker-compose.gpu-optimized.yml --profile preprocessing up data-prep
@@ -117,10 +117,6 @@ run_training() {
     print_status "   🎯 Iniciando entrenamiento TensorFlow..."
     docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up tf-trainer
     
-    # Esperar finalización
-    print_status "⏳ Esperando finalización del entrenamiento..."
-    docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up tf-trainer
-    
     # Limpiar
     docker-compose -f docker-compose.gpu-optimized.yml down
     
@@ -141,18 +137,6 @@ run_transformer_training() {
 }
 
 # Entrenamiento Transformer - opcional
-run_transformer_training() {
-    if [[ $1 == "--include-transformer" ]]; then
-        print_status "🤖 Iniciando entrenamiento Transformer..."
-        
-        docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up transformer-trainer
-        
-        print_success "Entrenamiento Transformer completado"
-    else
-        print_warning "Omitiendo entrenamiento Transformer (usar --include-transformer para activar)"
-    fi
-}
-
 # Entrenamiento PyTorch (Mamba) - opcional
 run_pytorch_training() {
     if [[ $1 == "--include-mamba" ]]; then

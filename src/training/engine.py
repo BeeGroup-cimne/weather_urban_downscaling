@@ -99,12 +99,20 @@ def run_experiment(model, train_ds, val_ds, experiment_name):
     ]
 
     # --- 4. ENTRENAR ---
+    fit_kwargs = {
+        "epochs": Config.EPOCHS,
+        "callbacks": callbacks,
+        "verbose": 1
+    }
+    
+    if getattr(Config, "MAX_STEPS_PER_EPOCH", None):
+        fit_kwargs["steps_per_epoch"] = Config.MAX_STEPS_PER_EPOCH
+        fit_kwargs["validation_steps"] = max(1, Config.MAX_STEPS_PER_EPOCH // 2)
+    
     history = model.fit(
         train_ds,
         validation_data=val_ds,
-        epochs=Config.EPOCHS,
-        callbacks=callbacks,
-        verbose=1
+        **fit_kwargs
     )
     
     print(f"✅ Experimento {experiment_name} finalizado.")

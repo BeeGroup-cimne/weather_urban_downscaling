@@ -6,19 +6,12 @@ from config.config import Config
 from src.data_loader import BigDataPipeline
 from src.models import ModelZoo
 from src.utils import notify_completion, plot_comparative_history , run_experiment , visualize_results
+from src.losses import tf_hybrid_loss
 
 tf.random.set_seed(Config.SEED)
 
-def combined_loss(y_true, y_pred):
-    # 1. Error de Valores (MSE) - Para precisión numérica
-    mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred)
-    
-    # 2. Error de Estructura (SSIM) - Para nitidez visual
-    ssim_loss = 1 - tf.reduce_mean(tf.image.ssim(y_true, y_pred, max_val=5.0))
-    
-    # 3. Combinación (Ajusta el peso alfa)
-    alpha = 0.8
-    return (1 - alpha) * mse + alpha * ssim_loss
+# Loss híbrida (MSE + SSIM)
+combined_loss = tf_hybrid_loss(alpha=0.8, max_val=5.0)
 
 
 # MAIN EXECUTION

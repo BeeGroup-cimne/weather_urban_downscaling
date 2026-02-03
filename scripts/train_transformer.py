@@ -20,6 +20,7 @@ sys.path.extend([parent_dir, os.path.join(parent_dir, 'src')])
 from config.gpu_server_config import GPUServerConfig as Config
 from src.optimized_data_pipeline import OptimizedBigDataPipeline
 from src.models.transformer_optimized import build_lightweight_transformer_unet
+from src.losses import tf_hybrid_loss
 
 class TransformerTrainer:
     """Trainer especializado para Transformer models"""
@@ -120,17 +121,14 @@ class TransformerTrainer:
         model = self.build_transformer_model()
         
         # Compilar con loss híbrido
-        def hybrid_loss(y_true, y_pred):
-            mse_loss = tf.keras.losses.mse(y_true, y_pred)
-            ssim_loss = 1 - tf.image.ssim(y_true, y_pred, max_val=1.0)
-            return (1 - 0.8) * mse_loss + 0.8 * ssim_loss
+        self.loss_fn = tf_hybrid_loss(alpha=0.8, max_val=1.0)
         
         model.compile(
             optimizer=tf.keras.optimizers.Adam(
                 learning_rate=self.config.LEARNING_RATE,
                 clipnorm=1.0  # Gradient clipping para estabilidad
             ),
-            loss=hybrid_loss,
+            loss=self.loss_fn,
             metrics=['mae', 'mse']
         )
         
@@ -196,9 +194,7 @@ class TransformerTrainer:
                     y_pred = model(x_batch, training=True)
                     
                     # Loss calculation
-                    mse_loss = tf.keras.losses.mse(y_batch, y_pred)
-                    ssim_loss = 1 - tf.image.ssim(y_batch, y_pred, max_val=1.0)
-                    total_loss = (1 - 0.8) * mse_loss + 0.8 * ssim_loss
+                    total_loss = self.loss_fn(y_batch, y_pred)
                     
                     # Normalize por accumulation steps
                     scaled_loss = total_loss / accumulation_steps
@@ -215,7 +211,7 @@ class TransformerTrainer:
                     ]
                 
                 train_losses.append(total_loss.numpy())
-                train_maes.append(tf.keras.metrics.mae(y_batch, y_pred).numpy())
+                train_maes.append(tf.reduce_mean(tf.keras.metrics.mae(y_batch, y_pred)).numpy())
                 
                 step_count += 1
                 
@@ -233,7 +229,7 @@ class TransformerTrainer:
                     gc.collect()
                 
                 # Limitar pasos para debugging
-                if step_count >= 30:  # Limitar para pruebas rápidas
+                if self.config.MAX_STEPS_PER_EPOCH is not None and step_count >= self.config.MAX_STEPS_PER_EPOCH:
                     break
             
             # Validation
@@ -268,8 +264,8 @@ class TransformerTrainer:
         for x_batch, y_batch in val_ds.take(10):  # Limitar para velocidad
             y_pred = model(x_batch, training=False)
             
-            loss = tf.keras.losses.mse(y_batch, y_pred)
-            mae = tf.keras.metrics.mae(y_batch, y_pred)
+            loss = tf.reduce_mean(tf.keras.losses.mse(y_batch, y_pred))
+            mae = tf.reduce_mean(tf.keras.metrics.mae(y_batch, y_pred))
             
             val_losses.append(loss.numpy())
             val_maes.append(mae.numpy())
@@ -288,6 +284,13 @@ class TransformerTrainer:
             print(f"\n📊 Preparando datos...")
             self.pipeline = OptimizedBigDataPipeline(self.config)
             train_ds, val_ds = self.pipeline.get_tf_datasets()
+            
+            # El Transformer optimizado predice solo el último timestep
+            def select_last_timestep(x, y):
+                return x, y[:, -1, ...]
+            
+            train_ds = train_ds.map(select_last_timestep)
+            val_ds = val_ds.map(select_last_timestep)
             
             # Training
             history = self.train_transformer(train_ds, val_ds)

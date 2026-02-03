@@ -22,6 +22,7 @@ from src.optimized_data_pipeline import OptimizedBigDataPipeline
 from src.models_legacy import ModelZoo
 from src.models.transformer_optimized import build_lightweight_transformer_unet
 from src.utils_legacy import run_experiment, notify_completion
+from src.losses import tf_hybrid_loss
 
 class GPUOptimizedTrainer:
     def __init__(self):
@@ -90,10 +91,6 @@ class GPUOptimizedTrainer:
             
             # ConvLSTM Optimizado  
             print(f"   📦 Construyendo ConvLSTM optimizado...")
-            models['ConvLSTM'] = ModelZoo.build_conv_lstm()
-            
-            # ConvLSTM Optimizado  
-            print(f"   📦 Construyendo ConvLSTM optimizado...")
             models['ConvLSTM'] = ModelZoo.build_hybrid_unet_lstm()
             
             # Transformer Optimizado
@@ -130,15 +127,12 @@ class GPUOptimizedTrainer:
             optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
             
             # Loss function con SSIM
-            def hybrid_loss(y_true, y_pred):
-                mse_loss = tf.keras.losses.mse(y_true, y_pred)
-                ssim_loss = 1 - tf.image.ssim(y_true, y_pred, max_val=1.0)
-                return (1 - 0.8) * mse_loss + 0.8 * ssim_loss
+            loss_fn = tf_hybrid_loss(alpha=0.8, max_val=1.0)
             
             # Compilar
             model.compile(
                 optimizer=optimizer,
-                loss=hybrid_loss,
+                loss=loss_fn,
                 metrics=['mae', 'mse']
             )
             
@@ -224,9 +218,7 @@ class GPUOptimizedTrainer:
                     y_pred = model(x_batch, training=True)
                     
                     # Loss calculation
-                    mse_loss = tf.keras.losses.mse(y_batch, y_pred)
-                    ssim_loss = 1 - tf.image.ssim(y_batch, y_pred, max_val=1.0)
-                    total_loss = (1 - 0.8) * mse_loss + 0.8 * ssim_loss
+                    total_loss = loss_fn(y_batch, y_pred)
                     
                     # Normalize by accumulation steps
                     scaled_loss = total_loss / accumulation_steps
@@ -243,7 +235,7 @@ class GPUOptimizedTrainer:
                     ]
                 
                 train_losses.append(total_loss.numpy())
-                train_maes.append(tf.keras.metrics.mae(y_batch, y_pred).numpy())
+                train_maes.append(tf.reduce_mean(tf.keras.metrics.mae(y_batch, y_pred)).numpy())
                 
                 step_count += 1
                 
@@ -257,8 +249,8 @@ class GPUOptimizedTrainer:
                     tf.keras.backend.clear_session()
                     gc.collect()
                 
-                # Limitar steps para debugging
-                if step_count >= 50:  # Limitar para pruebas
+                # Limitar steps si se configuró un máximo
+                if self.config.MAX_STEPS_PER_EPOCH is not None and step_count >= self.config.MAX_STEPS_PER_EPOCH:
                     break
             
             # Validation
@@ -293,8 +285,8 @@ class GPUOptimizedTrainer:
         for x_batch, y_batch in val_ds.take(10):  # Limitar para velocidad
             y_pred = model(x_batch, training=False)
             
-            loss = tf.keras.losses.mse(y_batch, y_pred)
-            mae = tf.keras.metrics.mae(y_batch, y_pred)
+            loss = tf.reduce_mean(tf.keras.losses.mse(y_batch, y_pred))
+            mae = tf.reduce_mean(tf.keras.metrics.mae(y_batch, y_pred))
             
             val_losses.append(loss.numpy())
             val_maes.append(mae.numpy())
@@ -321,8 +313,22 @@ class GPUOptimizedTrainer:
             histories = {}
             for model_name, model in models.items():
                 print(f"\n{'='*50}")
+                
+                # Ajustar targets si el modelo solo predice el último timestep
+                model_train_ds = train_ds
+                model_val_ds = val_ds
+                
+                try:
+                    if isinstance(model.output_shape, tuple) and len(model.output_shape) == 4:
+                        def select_last_timestep(x, y):
+                            return x, y[:, -1, ...]
+                        model_train_ds = train_ds.map(select_last_timestep)
+                        model_val_ds = val_ds.map(select_last_timestep)
+                except Exception:
+                    pass
+                
                 history = self.train_model_with_memory_management(
-                    model, model_name, train_ds, val_ds
+                    model, model_name, model_train_ds, model_val_ds
                 )
                 histories[model_name] = history
                 
