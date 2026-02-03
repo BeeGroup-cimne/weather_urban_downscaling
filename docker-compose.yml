@@ -70,5 +70,5 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     command: >
-      python -c " from src.data_loader import BigDataPipeline from config.config import Config import os os.makedirs('/app/data/processed', exist_ok=True) pipeline = BigDataPipeline(Config) pipeline.process_static_data() pipeline.run_etl_process() print('✅ Data preprocessing complete!') "
+      python -c "from src.data_loader import BigDataPipeline; from config.config import Config; import os; os.makedirs('/app/data/processed', exist_ok=True); pipeline = BigDataPipeline(Config); pipeline.process_static_data(); pipeline.run_etl_process(); print('✅ Data preprocessing complete!')"
     restart: "no"

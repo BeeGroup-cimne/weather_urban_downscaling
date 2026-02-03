@@ -17,6 +17,7 @@ This guide provides step-by-step instructions for deploying the Weather Urban Do
 ### Hardware Requirements
 - **NVIDIA GPU** with CUDA support
 - **GPU Memory**: Minimum 8GB (recommended 16GB+)
+
 - **System RAM**: Minimum 32GB (recommended 64GB+)
 - **Storage**: 100GB+ for datasets and models
 
@@ -34,7 +35,17 @@ git clone https://github.com/BeeGroup-cimne/weather_urban_downscaling.git
 cd weather_urban_downscaling
 ```
 
-### 2. Verify GPU Support
+### 2. Data Setup
+Before running the deployment script, you **must** place your datasets in the following directories (create them if they don't exist):
+
+- `data/processed/estaciones_interpoladas_final.nc` (High-res targets)
+- `data/processed/era5land/` (Contains your `.grib` files)
+- `data/processed/weather_static_FINAL_stations.zarr` (Static features)
+
+> [!IMPORTANT]
+> The automated pipeline looks for these files to generate the training cache. If they are missing, the `data-prep` step will fail.
+
+### 3. Verify GPU Support
 ```bash
 # Check NVIDIA drivers
 nvidia-smi
@@ -43,7 +54,7 @@ nvidia-smi
 docker run --rm --gpus all nvidia/cuda:11.8-base-ubuntu20.04 nvidia-smi
 ```
 
-### 3. One-Click Deployment
+### 4. One-Click Deployment
 ```bash
 # Make script executable
 chmod +x deploy_gpu_server.sh
@@ -56,7 +67,8 @@ chmod +x deploy_gpu_server.sh
 
 ### Before (OOM Issues)
 - **UNet**: ~2GB per batch
-- **ConvLSTM**: ~6GB per batch  
+- **ConvLSTM**: ~6GB per batch
+
 - **Mamba**: ~12GB per batch ❌
 
 ### After (Optimized)

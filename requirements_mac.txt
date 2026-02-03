@@ -11,3 +11,6 @@ matplotlib
 scikit-learn
 tqdm
 tf_keras
+pyproj
+netcdf4
+scipy
