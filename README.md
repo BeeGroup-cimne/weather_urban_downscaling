@@ -302,7 +302,7 @@ Mixed precision is disabled on the server to avoid loss-scaling issues with the 
 ---
 
 ## 📝 License
-[Insert License Here]
+MIT License. See `LICENSE`.
 
 ---
 
@@ -359,6 +359,25 @@ python scripts/evaluate_for_paper.py
 
 If you need custom plotting per model, create subfolders:
 `experiments/figures/unet/`, `experiments/figures/convlstm/`, `experiments/figures/mamba_seq6/`, etc.
+
+**Planned figure file names (paper-ready):**
+- `experiments/figures/fig01_pipeline.png`
+- `experiments/figures/fig02_qualitative_maps.png`
+- `experiments/figures/fig03_spatial_error_maps.png`
+- `experiments/figures/fig04_metrics_bar.png`
+- `experiments/figures/fig05_timeseries_stations.png`
+- `experiments/figures/fig06_seq_len_ablation.png`
+
+**Suggested scripts (to automate outputs):**
+- `scripts/fig01_pipeline_diagram.py`
+- `scripts/fig02_qualitative_maps.py`
+- `scripts/fig03_spatial_error_maps.py`
+- `scripts/fig04_metrics_bar.py`
+- `scripts/fig05_timeseries_stations.py`
+- `scripts/fig06_seq_len_ablation.py`
+
+If preferred, these can be consolidated into:
+`scripts/generate_paper_figures.py`
 
 ---
 

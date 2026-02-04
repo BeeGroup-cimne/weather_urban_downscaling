@@ -127,6 +127,32 @@ class GPUOptimizedTrainer:
         print(f"\n🎯 Entrenando {model_name}...")
         
         try:
+            # Resume support: load previous history and weights if present
+            start_epoch = 0
+            history_seed = None
+            log_path = f"experiments/logs/{model_name}_gpu_optimized_log.csv"
+            if os.path.exists(log_path):
+                try:
+                    import pandas as pd
+                    df_hist = pd.read_csv(log_path)
+                    start_epoch = len(df_hist)
+                    history_seed = {
+                        'loss': df_hist.get('loss', []).tolist(),
+                        'val_loss': df_hist.get('val_loss', []).tolist(),
+                        'mae': df_hist.get('mae', []).tolist(),
+                        'val_mae': df_hist.get('val_mae', []).tolist(),
+                    }
+                    print(f"🔁 Resume enabled for {model_name}: starting at epoch {start_epoch + 1}")
+                except Exception as e:
+                    print(f"⚠️ Could not load history for resume: {e}")
+            
+            model_path = f"experiments/models/{model_name}_gpu_optimized.h5"
+            if os.path.exists(model_path):
+                try:
+                    model.load_weights(model_path)
+                    print(f"🔁 Loaded weights from {model_path}")
+                except Exception as e:
+                    print(f"⚠️ Could not load weights for resume: {e}")
             # Compilar con optimizador adaptativo
             optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
             
@@ -167,7 +193,8 @@ class GPUOptimizedTrainer:
             
             # Entrenamiento con gradient accumulation
             history = self._train_with_gradient_accumulation(
-                model, train_ds, val_ds, callbacks, model_name
+                model, train_ds, val_ds, callbacks, model_name,
+                start_epoch=start_epoch, history_seed=history_seed
             )
             
             print(f"✅ {model_name} entrenado exitosamente")
@@ -196,7 +223,7 @@ class GPUOptimizedTrainer:
             print(f"❌ Error entrenando {model_name}: {e}")
             raise
     
-    def _train_with_gradient_accumulation(self, model, train_ds, val_ds, callbacks, model_name):
+    def _train_with_gradient_accumulation(self, model, train_ds, val_ds, callbacks, model_name, start_epoch=0, history_seed=None):
         """Implementar gradient accumulation para batches efectivos más grandes"""
         
         # Crear datasets más pequeños para accumulation
@@ -207,9 +234,12 @@ class GPUOptimizedTrainer:
         accumulation_steps = self.config.GRADIENT_ACCUMULATION_STEPS
         loss_fn = tf_hybrid_loss()
         
-        history = {'loss': [], 'val_loss': [], 'mae': [], 'val_mae': []}
+        history = history_seed or {'loss': [], 'val_loss': [], 'mae': [], 'val_mae': []}
+        if start_epoch >= epochs:
+            print(f"✅ {model_name} already completed {epochs} epochs. Skipping.")
+            return history
         
-        for epoch in range(epochs):
+        for epoch in range(start_epoch, epochs):
             print(f"\n📅 Epoch {epoch + 1}/{epochs}")
             
             # Training con accumulation
@@ -274,9 +304,10 @@ class GPUOptimizedTrainer:
             print(f"   📊 Val Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
             
             # Early stopping manual
-            if len(history['val_loss']) >= self.config.EARLY_STOPPING_PATIENCE:
+            if len(history['val_loss']) > self.config.EARLY_STOPPING_PATIENCE:
                 recent_losses = history['val_loss'][-self.config.EARLY_STOPPING_PATIENCE:]
-                if all(loss >= min(history['val_loss'][:-self.config.EARLY_STOPPING_PATIENCE]) for loss in recent_losses):
+                prev_losses = history['val_loss'][:-self.config.EARLY_STOPPING_PATIENCE]
+                if prev_losses and all(loss >= min(prev_losses) for loss in recent_losses):
                     print(f"🛑 Early stopping triggered at epoch {epoch + 1}")
                     break
         
