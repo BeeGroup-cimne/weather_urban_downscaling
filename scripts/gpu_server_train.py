@@ -101,12 +101,8 @@ class GPUOptimizedTrainer:
             print(f"   📦 Construyendo ConvLSTM optimizado...")
             models['ConvLSTM'] = ModelZoo.build_hybrid_unet_lstm()
             
-            # Transformer Optimizado
-            print(f"   📦 Construyendo Transformer optimizado...")
-            models['Transformer'] = build_lightweight_transformer_unet(
-                input_shape=input_shape,
-                max_memory_gb=self.config.GPU_MEMORY_GB or 8
-            )
+            # Transformer Optimizado (desactivado por OOM en HR con atención completa)
+            print(f"⚠️ Omitiendo Transformer (OOM en A10 con embedding grande)")
             
             # Mamba Optimizado (si hay suficiente memoria)
             if self.config.GPU_MEMORY_GB and self.config.GPU_MEMORY_GB >= 24:
