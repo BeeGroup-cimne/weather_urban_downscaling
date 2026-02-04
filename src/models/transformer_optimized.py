@@ -165,10 +165,11 @@ def build_optimized_transformer_unet(input_shape: Tuple[int, ...],
     )(p3)
     
     # Reshape para transformer: (batch, seq_len, embed_dim)
-    batch_size, seq_len_dim, h_reduced, w_reduced, channels = tf.shape(x_neck)
-    embed_dim = h_reduced * w_reduced * channels
-    
-    x_flat = Reshape((seq_len_dim, embed_dim))(x_neck)
+    # Usar dimensiones estáticas para evitar errores con KerasTensors
+    h_reduced = H // 8
+    w_reduced = W // 8
+    embed_dim = h_reduced * w_reduced * bottleneck_filters
+    x_flat = Reshape((seq_len, embed_dim))(x_neck)
     
     # Transformer blocks con memory optimization
     if use_chunked_attention:
@@ -198,15 +199,11 @@ def build_optimized_transformer_unet(input_shape: Tuple[int, ...],
             )(x_trans)
     
     # Reshape de vuelta a formato espacial
-    # Calcular dimensiones espaciales del bottleneck
-    p3_shape = tf.shape(p3)
-    h_reduced_calc = p3_shape[2]  # h/8
-    w_reduced_calc = p3_shape[3]  # w/8
-    
-    x_reshaped = Reshape((seq_len_dim, h_reduced_calc, w_reduced_calc, -1))(x_trans)
-    
+    x_reshaped = Reshape((seq_len, h_reduced, w_reduced, bottleneck_filters))(x_trans)
     # Asegurar que los canales coincidan
-    x_reshaped = Conv2D(bottleneck_filters, 1, padding='same', activation='relu')(x_reshaped)
+    x_reshaped = TimeDistributed(
+        Conv2D(bottleneck_filters, 1, padding='same', activation='relu')
+    )(x_reshaped)
     
     # --- DECODER ---
     # Upsample y skip connections
