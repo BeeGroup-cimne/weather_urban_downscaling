@@ -7,7 +7,7 @@ from tensorflow.keras.layers import (
 )
 from tensorflow.keras import layers
 from tensorflow.keras.models import Model
-from config.config import Config
+from config.runtime import Config
 
 # --- CLASE AUXILIAR: MAMBA BLOCK (Pure TF) ---
 
@@ -159,7 +159,7 @@ class ModelZoo:
         - Nativo para 5D (sin errores de dimensión).
         - Mejor convergencia para LSTMs.
         """
-        from config.config import Config
+        from config.runtime import Config
         
         # 1. Inputs
         lr_input = Input(shape=(Config.SEQ_LEN, lr_shape[0], lr_shape[1], Config.CHANNELS), name="lr_input")
@@ -194,6 +194,7 @@ class ModelZoo:
     @classmethod
     def build_unet(cls):
         """Experimento 2: U-Net Standard"""
+        from config.runtime import Config
         inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, 9))
         inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, Config.STATIC_CHANNELS))
 
@@ -243,6 +244,7 @@ class ModelZoo:
         """
         # Inputs Dinámicos (LR) y Estáticos (HR)
         # Nota: Usamos '9' canales o 'None' si queremos flexibilidad total
+        from config.runtime import Config
         inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, 9)) 
         inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, Config.STATIC_CHANNELS))
 
@@ -354,7 +356,7 @@ class ModelZoo:
         - Bottleneck: Mamba Block (Mezcla contexto global temporal-espacial)
         - Decoder: Conv2DTranspose (Reconstruye detalles)
         """
-        from config.config import Config # Import local para evitar ciclos
+        from config.runtime import Config # Import local para evitar ciclos
         
         # 1. Inputs
         # LR Input: (Batch, Time, H_lr, W_lr, C_lr)
