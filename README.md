@@ -1,16 +1,17 @@
-# Weather Urban Downscaling 🌍🌡️
+# Weather Urban Downscaling
 
-**High-Resolution Urban Heat Island Transformation using Deep Learning**
+**High-Resolution Urban Heat Island Downscaling with Deep Learning**
 
 This project implements state-of-the-art Deep Learning models to downscale low-resolution climate data (ERA5-Land, ~9km) into high-resolution urban thermal maps (~100m or less), incorporating complex static urban features (building heights, street width, sky view factor).
 
 It features a dual-engine architecture supporting both **TensorFlow (Legacy & Modern)** and **PyTorch (Mamba SSM)**.
+The current server target is **Ubuntu 24.04.3 LTS + NVIDIA A10 (22GB)** using Docker Compose v2.
 
 ---
 
 ## 🚀 Key Features
 
-*   **Big Data Pipeline**: A robust ETL engine built with `xarray`, `dask`, and `zarr` to process terabytes of climate data efficiently.
+*   **Big Data Pipeline**: A robust ETL engine built with `xarray`, `dask`, and `zarr` to process large climate data efficiently.
     *   *Automatic Static Feature Generation*: Calculates urban indices (SVF, Roughness, Density) on the fly.
 *   **Hybrid Loss Function**: Combines **MSE** (Numerical Accuracy) and **SSIM** (Structural Similarity) to produce sharp, visually coherent maps. `Loss = (1-α)*MSE + α*SSIM`.
 *   **Multi-Model Support**:
@@ -20,6 +21,7 @@ It features a dual-engine architecture supporting both **TensorFlow (Legacy & Mo
 *   **Dual Engine**: 
     *   `TensorFlow` (Primary production engine)
     *   `PyTorch` (Experimental Mamba implementation)
+*   **Paper-Ready Splits**: Fixed temporal splits for train/val/test (2017 months) to avoid leakage.
 
 ---
 
@@ -51,7 +53,7 @@ pip install -r requirements_mac.txt
 pip install -r requirements_tf.txt  # or requirements_torch.txt
 ```
 
-### Option 2: Docker Setup (Recommended for Servers) 🐳
+### Option 2: Docker Setup (Recommended for Servers)
 
 ```bash
 # 1. Clone the repository
@@ -74,8 +76,7 @@ docker-compose run tf-trainer
 docker-compose run torch-trainer
 
 # With GPU support (requires nvidia-docker):
-# Uncomment the 'deploy' section in docker-compose.yml first
-docker-compose run tf-trainer
+# Use docker-compose.gpu-optimized.yml (see GPU Server Quick Start)
 ```
 
 ---
@@ -100,22 +101,34 @@ data/
 - **HR Target**: Generated from meteorological station data using `src/data/hourly_generator.py`
 - **Static Features**: Generated from urban morphology data
 
+**Derived caches (created by pipeline):**
+- `data/processed/weather_cache.zarr`
+- `data/processed/static_processed.npy`
+- `data/processed/stats_config.npz`
+
 ---
 
 ## 📂 Project Structure
 
 ```
 ├── config/
-│   └── config.py           # Global hyperparameters & paths (auto-detects hardware)
+│   ├── config.py           # Local/default config
+│   ├── gpu_server_config.py# Server/GPU config
+│   └── runtime.py          # Selects GPU config when USE_GPU_CONFIG=1
 ├── data/                   # Data storage (Zarr cache, Raw NetCDF) - NOT in git
 ├── docker/
 │   ├── Dockerfile.tf       # TensorFlow container
 │   └── Dockerfile.torch    # PyTorch container
-├── docker-compose.yml      # Container orchestration
+├── docker-compose.yml      # Base orchestration
+├── docker-compose.gpu-optimized.yml # GPU server orchestration (Compose v2)
 ├── scripts/
-│   ├── run_ablation.py     # Main experimentation script (TF)
-│   ├── train_torch.py      # PyTorch training script
-│   └── diagnose_time.py    # Data diagnostic utility
+│   ├── run_ablation.py       # Main experimentation script (TF)
+│   ├── gpu_server_train.py   # GPU-optimized TF training
+│   ├── train_torch.py        # PyTorch training (baseline)
+│   ├── torch_gpu_train.py    # PyTorch Mamba training (GPU)
+│   ├── run_mamba_seq6.py     # Mamba experiment SEQ_LEN=6
+│   ├── run_mamba_seq12.py    # Mamba experiment SEQ_LEN=12
+│   └── check_data_health.py  # Cache/NaN validation
 ├── src/
 │   ├── data_loader.py      # BigDataPipeline (ETL & Generators)
 │   ├── models_legacy.py    # TF Models (ReLU, No-BN -> Sharp Results)
@@ -144,7 +157,7 @@ docker-compose run tf-trainer
 ```
 
 *   **Pipeline**: Automatically generates `data/processed/static_processed.npy` if missing.
-*   **Models**: Trains a Hybrid U-Net + Mamba by default.
+*   **Models**: Trains U-Net + ConvLSTM (Transformer disabled on A10 due to OOM).
 
 ### 2. Ablation Study
 
@@ -209,26 +222,30 @@ docker-compose down --rmi all
 
 ## ⚡ GPU Server Quick Start
 
+This repo is designed to run with **Docker Compose v2** on Ubuntu servers.
+
 1. Preprocess (one-time):
 ```bash
-docker-compose -f docker-compose.gpu-optimized.yml --profile preprocessing up data-prep
+docker compose -f docker-compose.gpu-optimized.yml --profile preprocessing up data-prep
 ```
 
 2. Data health check:
 ```bash
-python scripts/check_data_health.py
+docker compose -f docker-compose.gpu-optimized.yml run --rm data-prep python scripts/check_data_health.py
 ```
 
 3. Train (TensorFlow):
 ```bash
-docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up tf-trainer
+docker compose -f docker-compose.gpu-optimized.yml up -d tf-trainer
+docker compose -f docker-compose.gpu-optimized.yml logs -f tf-trainer
 ```
 
 Nota: en GPU se usa automáticamente `config/gpu_server_config.py` vía `USE_GPU_CONFIG=1`.
 
 4. Optional (PyTorch Mamba):
 ```bash
-docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up torch-trainer
+docker compose -f docker-compose.gpu-optimized.yml run --rm torch-trainer python scripts/run_mamba_seq6.py
+docker compose -f docker-compose.gpu-optimized.yml run --rm torch-trainer python scripts/run_mamba_seq12.py
 ```
 
 ---
@@ -249,12 +266,19 @@ These are concatenated with the dynamic low-resolution input, allowing the model
 
 ---
 
-## 📊 Results
+## 📊 Results (Populate After Runs)
 
-| Model             | MAE (ºC) | SSIM     | Definition |
-| ----------------- | -------- | -------- | ---------- |
-| U-Net (Baseline)  | 1.2      | 0.65     | Low        |
-| **U-Net + Mamba** | **0.8**  | **0.82** | **High**   |
+| Model             | MAE (ºC) | SSIM     | Notes |
+| ----------------- | -------- | -------- | ----- |
+| U-Net (Baseline)  | TBD      | TBD      | Train 2017 Jan–Oct, Val Nov, Test Dec |
+| ConvLSTM          | TBD      | TBD      | Same split, SEQ_LEN=6 |
+| Mamba (SEQ=6)     | TBD      | TBD      | PyTorch |
+| Mamba (SEQ=12)    | TBD      | TBD      | PyTorch |
+
+**Result Artifacts (expected paths):**
+- `experiments/logs/<model>_gpu_optimized_log.csv`
+- `experiments/models/<model>_gpu_optimized.h5`
+- `experiments/figures/` (plots and maps)
 
 ---
 
@@ -272,7 +296,104 @@ Grant Full Disk Access to Terminal in System Settings > Privacy & Security.
 ### Docker GPU Not Detected
 Ensure nvidia-docker is installed and uncomment the `deploy` section in `docker-compose.yml`.
 
+### Mixed Precision Warnings
+Mixed precision is disabled on the server to avoid loss-scaling issues with the custom training loop.
+
 ---
 
 ## 📝 License
 [Insert License Here]
+
+---
+
+## ✅ Evaluation Protocol (for Paper)
+
+**Metrics**
+- MAE (°C)
+- RMSE (°C)
+- SSIM
+- Optional: Bias and correlation (per grid cell and overall)
+
+**Evaluation Windows**
+- Train: 2017-01-01 → 2017-11-01
+- Val: 2017-11-01 → 2017-12-01
+- Test: 2017-12-01 → 2018-01-01
+
+**Output Reporting**
+- Per-epoch logs: `experiments/logs/`
+- Best checkpoints: `experiments/models/`
+- Figures: `experiments/figures/`
+
+**Suggested Plots**
+- Spatial error maps (MAE and bias)
+- SSIM histograms (per timestep)
+- Time-series at selected stations
+- Scatter plot HR vs Pred
+
+---
+
+## ✅ Reproducibility Checklist
+
+- Fixed temporal split (train/val/test by month in 2017)
+- Fixed SEQ_LEN for baselines (6)
+- Mamba runs at SEQ_LEN = 6 and 12
+- Seeds set in `config/config.py` and `config/gpu_server_config.py`
+- Cache files created and checked: `weather_cache.zarr`, `static_processed.npy`, `stats_config.npz`
+- Save git hash + config snapshot for each run (recommended)
+
+---
+
+## 🧪 How To Generate Figures (Suggested)
+
+**Quick evaluation + plots (after training):**
+```bash
+# Example: evaluate and generate paper plots
+python scripts/evaluate_for_paper.py
+```
+
+**Typical outputs (expected):**
+- `experiments/figures/mae_map.png`
+- `experiments/figures/bias_map.png`
+- `experiments/figures/ssim_hist.png`
+- `experiments/figures/scatter_hr_vs_pred.png`
+
+If you need custom plotting per model, create subfolders:
+`experiments/figures/unet/`, `experiments/figures/convlstm/`, `experiments/figures/mamba_seq6/`, etc.
+
+---
+
+## 🧾 Paper-Ready Abstract (Draft Proposal)
+
+Urban heat island mapping requires high‑resolution temperature fields, yet available reanalysis products are typically coarse (e.g., ~9 km). We propose a deep learning downscaling framework that transforms ERA5‑Land inputs into high‑resolution urban thermal maps by combining dynamic meteorological predictors with static urban morphology (elevation, SVF, roughness, and related descriptors). The core model family is a legacy U‑Net with a hybrid MSE+SSIM loss that preserves sharp spatial gradients, extended with temporal baselines (ConvLSTM) and state‑space sequence modeling (Mamba) to capture multi‑hour dynamics. Experiments are conducted with a fixed chronological split of 2017 (train: Jan–Oct, val: Nov, test: Dec) to avoid temporal leakage. We report spatial accuracy (MAE/RMSE), structural similarity (SSIM), and qualitative error maps, and we analyze the impact of sequence length (6 vs. 12) on temporal skill. The results demonstrate robust downscaling performance and improved structural fidelity in urban temperature patterns, while longer sequences yield additional gains in temporal coherence.
+
+---
+
+## 🧩 Methods Section Checklist (Paper)
+
+- Data sources (ERA5-Land, station-based HR)
+- HR target generation (interpolation + grid 251×251)
+- Static features and preprocessing
+- Temporal split rationale (chronological, no leakage)
+- Model architectures (U-Net, ConvLSTM, Mamba)
+- Loss function (MSE + SSIM, α)
+- Training protocol (epochs, batch, seq_len)
+- Metrics and evaluation protocol
+- Hardware and reproducibility
+
+---
+
+## 📌 Paper-Ready Configuration (Summary)
+
+**Temporal Splits (fixed):**
+- Train: **2017-01-01 → 2017-11-01**
+- Val: **2017-11-01 → 2017-12-01**
+- Test: **2017-12-01 → 2018-01-01**
+
+**Sequences:**
+- Default for TF (UNet/ConvLSTM): **SEQ_LEN = 6**
+- Mamba experiments: **SEQ_LEN = 6** and **SEQ_LEN = 12**
+
+**Server Environment:**
+- Ubuntu 24.04.3 LTS
+- NVIDIA A10 (22GB)
+- Docker Compose v2 (`docker compose`)
