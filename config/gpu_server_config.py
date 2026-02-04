@@ -101,6 +101,17 @@ class GPUServerConfig:
     STATIC_CACHE_PATH = str(BASE_DIR / "data" / "processed" / "static_processed.npy")
     
     # ==========================================================
+    # SPLITS TEMPORALES (para paper)
+    # ==========================================================
+    SPLIT_MODE = "time"  # "time" o "fraction"
+    TRAIN_START = "2017-01-01"
+    TRAIN_END = "2017-11-01"
+    VAL_START = "2017-11-01"
+    VAL_END = "2017-12-01"
+    TEST_START = "2017-12-01"
+    TEST_END = "2018-01-01"
+    
+    # ==========================================================
     # HIPERPARÁMETROS OPTIMIZADOS
     # ==========================================================
     

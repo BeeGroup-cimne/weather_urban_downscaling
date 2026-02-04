@@ -10,6 +10,7 @@ import dask.array as da
 from dask.diagnostics import ProgressBar
 from scipy.interpolate import NearestNDInterpolator
 import os
+import pandas as pd
 from config.config import Config
 
 
@@ -417,7 +418,31 @@ class BigDataPipeline:
         static_norm = (static_data - mean_st) / (std_st + 1e-6)
         
         total_len = ds.sizes['time']
-        split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+
+        def _time_indices(times, start, end):
+            times = pd.to_datetime(times).values
+            start = np.datetime64(start)
+            end = np.datetime64(end)
+            start_idx = int(np.searchsorted(times, start, side="left"))
+            end_idx = int(np.searchsorted(times, end, side="left"))
+            return start_idx, end_idx
+
+        if getattr(self.cfg, "SPLIT_MODE", "fraction") == "time":
+            try:
+                times = ds['time'].values
+                train_start, train_end = _time_indices(times, self.cfg.TRAIN_START, self.cfg.TRAIN_END)
+                val_start, val_end = _time_indices(times, self.cfg.VAL_START, self.cfg.VAL_END)
+                print(f"   📂 Dataset (train) range: {train_start} -> {train_end}")
+                print(f"   📂 Dataset (val) range: {val_start} -> {val_end}")
+            except Exception as e:
+                print(f"⚠️ Time split fallback to fraction due to: {e}")
+                split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+                train_start, train_end = 0, split_idx
+                val_start, val_end = split_idx, total_len
+        else:
+            split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+            train_start, train_end = 0, split_idx
+            val_start, val_end = split_idx, total_len
         
         # Detectar canales LR
         if 'variable' in da_lr.sizes:
@@ -467,11 +492,11 @@ class BigDataPipeline:
         spec_hr = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, 1), dtype=tf.float32)
 
         train_ds = tf.data.Dataset.from_generator(
-            lambda: generator(0, split_idx), output_signature=((spec_lr, spec_st), spec_hr)
+            lambda: generator(train_start, train_end), output_signature=((spec_lr, spec_st), spec_hr)
         ).shuffle(500).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
         
         val_ds = tf.data.Dataset.from_generator(
-            lambda: generator(split_idx, total_len), output_signature=((spec_lr, spec_st), spec_hr)
+            lambda: generator(val_start, val_end), output_signature=((spec_lr, spec_st), spec_hr)
         ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
         
         return train_ds, val_ds

@@ -196,8 +196,32 @@ class OptimizedBigDataPipeline:
                 print(f"⚠️ Static shape {static_norm.shape[:2]} no coincide con HR_SHAPE {self.config.HR_SHAPE}")
             
             total_len = ds.sizes[lr_time]
-            split_idx = int(total_len * self.config.SPLIT_FRACTION)
             seq_len = self.config.SEQ_LEN
+
+            def _time_indices(times, start, end):
+                times = pd.to_datetime(times).values
+                start = np.datetime64(start)
+                end = np.datetime64(end)
+                start_idx = int(np.searchsorted(times, start, side="left"))
+                end_idx = int(np.searchsorted(times, end, side="left"))
+                return start_idx, end_idx
+
+            if getattr(self.config, "SPLIT_MODE", "fraction") == "time":
+                try:
+                    times = ds[lr_time].values
+                    train_start, train_end = _time_indices(times, self.config.TRAIN_START, self.config.TRAIN_END)
+                    val_start, val_end = _time_indices(times, self.config.VAL_START, self.config.VAL_END)
+                    print(f"   📂 Dataset (train) range: {train_start} -> {train_end}")
+                    print(f"   📂 Dataset (val) range: {val_start} -> {val_end}")
+                except Exception as e:
+                    print(f"⚠️ Time split fallback to fraction due to: {e}")
+                    split_idx = int(total_len * self.config.SPLIT_FRACTION)
+                    train_start, train_end = 0, split_idx
+                    val_start, val_end = split_idx, total_len
+            else:
+                split_idx = int(total_len * self.config.SPLIT_FRACTION)
+                train_start, train_end = 0, split_idx
+                val_start, val_end = split_idx, total_len
             
             # Generador streaming para evitar OOM
             def generator(start_i, end_i):
@@ -239,13 +263,13 @@ class OptimizedBigDataPipeline:
             prefetch_buf = getattr(self.config, "PREFETCH_BUFFER_SIZE", 2)
             
             train_ds = tf.data.Dataset.from_generator(
-                lambda: generator(0, split_idx),
+                lambda: generator(train_start, train_end),
                 output_signature=((spec_lr, spec_st), spec_hr)
             ).shuffle(shuffle_buf).batch(self.config.BATCH_SIZE, drop_remainder=True) \
              .prefetch(prefetch_buf)
             
             val_ds = tf.data.Dataset.from_generator(
-                lambda: generator(split_idx, total_len),
+                lambda: generator(val_start, val_end),
                 output_signature=((spec_lr, spec_st), spec_hr)
             ).batch(self.config.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
             

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import IterableDataset, DataLoader
 import numpy as np
+import pandas as pd
 import xarray as xr
 import sys
 import os
@@ -36,14 +37,36 @@ class ZarrIterableDataset(IterableDataset):
         self.hr_x = next((d for d in self.ds['hr_target'].dims if d in ['x', 'longitude', 'lon']), 'x')
 
         total_len = self.ds.dims[self.lr_time]
-        split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+
+        def _time_indices(times, start, end):
+            times = pd.to_datetime(times).values
+            start = np.datetime64(start)
+            end = np.datetime64(end)
+            start_idx = int(np.searchsorted(times, start, side="left"))
+            end_idx = int(np.searchsorted(times, end, side="left"))
+            return start_idx, end_idx
+
+        if getattr(self.cfg, "SPLIT_MODE", "fraction") == "time":
+            try:
+                times = self.ds[self.lr_time].values
+                train_start, train_end = _time_indices(times, self.cfg.TRAIN_START, self.cfg.TRAIN_END)
+                val_start, val_end = _time_indices(times, self.cfg.VAL_START, self.cfg.VAL_END)
+            except Exception as e:
+                print(f"⚠️ Time split fallback to fraction due to: {e}")
+                split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+                train_start, train_end = 0, split_idx
+                val_start, val_end = split_idx, total_len
+        else:
+            split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+            train_start, train_end = 0, split_idx
+            val_start, val_end = split_idx, total_len
         
         if split == 'train':
-            self.start_idx = 0
-            self.end_idx = split_idx
+            self.start_idx = train_start
+            self.end_idx = train_end
         else:
-            self.start_idx = split_idx
-            self.end_idx = total_len
+            self.start_idx = val_start
+            self.end_idx = val_end
             
         print(f"   📂 Dataset ({split}) range: {self.start_idx} -> {self.end_idx}")
 
@@ -67,7 +90,7 @@ class ZarrIterableDataset(IterableDataset):
         # Logic copied from BigDataPipeline but adapted for quick access
         # Assuming static data is already generated and saved in cache or we create dummy logic
         # Ideally we should read `processed_cache_zarr/static_processed.npy`
-        static_path = os.path.join(PROJECT_ROOT, "processed_cache_zarr/static_processed.npy")
+        static_path = self.cfg.STATIC_CACHE_PATH
         if os.path.exists(static_path):
             static_data = np.load(static_path)
         else:
