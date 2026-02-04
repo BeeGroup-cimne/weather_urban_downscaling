@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from mamba_ssm import Mamba
 
 class DownsrUNetMamba(nn.Module):
@@ -72,6 +73,16 @@ class DownsrUNetMamba(nn.Module):
         # x_dyn: (Batch, Time, C_dyn, H, W)
         # x_static: (Batch, Time, C_st, H, W)
         
+        # If static grid is HR and dynamic is LR, downsample static to match dynamic.
+        if x_static.shape[-2:] != x_dyn.shape[-2:]:
+            b, t, c, h, w = x_static.shape
+            target_h, target_w = x_dyn.shape[-2], x_dyn.shape[-1]
+            x_static = x_static.view(b * t, c, h, w)
+            x_static = F.interpolate(
+                x_static, size=(target_h, target_w), mode="bilinear", align_corners=False
+            )
+            x_static = x_static.view(b, t, c, target_h, target_w)
+
         # 1. Concatenate Dynamic + Static along Channels
         x = torch.cat([x_dyn, x_static], dim=2) # Dim 2 is channels in (B, T, C, H, W)
         
@@ -129,4 +140,3 @@ class DownsrUNetMamba(nn.Module):
         out = self.time_distributed(self.final, d1)
         
         return out
-
