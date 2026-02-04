@@ -81,6 +81,9 @@ class GPUServerConfig:
         MODEL_DIM = 128
         MIXED_PRECISION = True
         GRADIENT_ACCUMULATION_STEPS = 4
+
+    # Override: desactivar mixed precision para evitar loss scaling en loop custom
+    MIXED_PRECISION = False
     
     # ==========================================================
     # RUTAS DE ARCHIVOS (mismas que original)
