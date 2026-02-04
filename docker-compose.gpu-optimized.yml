@@ -37,15 +37,12 @@ services:
     shm_size: '8gb'
     # Command con configuración optimizada
     command: >
-      python -c "
-      import sys;
-      sys.path.append('/app');
+      python -c "import sys; sys.path.append('/app');
       from config.gpu_server_config import GPUServerConfig;
       GPUServerConfig.print_memory_info();
       from src.optimized_data_pipeline import OptimizedBigDataPipeline;
       from scripts.gpu_server_train import train_gpu_optimized;
-      train_gpu_optimized()
-      "
+      train_gpu_optimized()"
     restart: "no"
     profiles:
       - training
