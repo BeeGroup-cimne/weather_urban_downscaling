@@ -44,18 +44,23 @@ class GPUOptimizedTrainer:
         gpus = tf.config.list_physical_devices('GPU')
         if gpus:
             try:
-                # Memory growth
+                # Memory growth (only if no virtual device config is set)
                 for gpu in gpus:
+                    if tf.config.experimental.get_virtual_device_configuration(gpu):
+                        continue
+                    if self.config.GPU_MEMORY_GB:
+                        continue
                     tf.config.experimental.set_memory_growth(gpu, True)
                 
                 # Limitar memoria si se especifica
                 if self.config.GPU_MEMORY_GB:
-                    memory_limit = int(self.config.GPU_MEMORY_FRACTION * self.config.GPU_MEMORY_GB * 1024)
-                    tf.config.experimental.set_virtual_device_configuration(
-                        gpus[0],
-                        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memory_limit)]
-                    )
-                    print(f"✅ GPU memory limitada a {memory_limit/1024:.1f}GB")
+                    if not tf.config.experimental.get_virtual_device_configuration(gpus[0]):
+                        memory_limit = int(self.config.GPU_MEMORY_FRACTION * self.config.GPU_MEMORY_GB * 1024)
+                        tf.config.experimental.set_virtual_device_configuration(
+                            gpus[0],
+                            [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memory_limit)]
+                        )
+                        print(f"✅ GPU memory limitada a {memory_limit/1024:.1f}GB")
                 
                 # Mixed precision
                 if self.config.MIXED_PRECISION:
