@@ -30,6 +30,9 @@ def tf_hybrid_loss(alpha=0.8, max_val=1.0):
         y_true_flat = tf.cast(_flatten_time(y_true), tf.float32)
         y_pred_flat = tf.cast(_flatten_time(y_pred), tf.float32)
         ssim_loss = 1 - tf.reduce_mean(tf.image.ssim(y_true_flat, y_pred_flat, max_val=max_val))
+        # Ensure consistent dtype under mixed precision
+        mse_loss = tf.cast(mse_loss, tf.float32)
+        ssim_loss = tf.cast(ssim_loss, tf.float32)
         return (1 - alpha) * mse_loss + alpha * ssim_loss
     
     return loss
