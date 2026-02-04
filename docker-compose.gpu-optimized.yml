@@ -11,6 +11,7 @@ services:
     image: weather_thesis:tf
     container_name: weather_tf_trainer
     volumes:
+      - ./:/app
       # Mount data directory (must contain your datasets)
       - ./data:/app/data
       # Mount experiments to persist outputs
