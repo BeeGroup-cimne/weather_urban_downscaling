@@ -205,6 +205,7 @@ class GPUOptimizedTrainer:
         # Custom training loop con gradient accumulation
         epochs = self.config.EPOCHS
         accumulation_steps = self.config.GRADIENT_ACCUMULATION_STEPS
+        loss_fn = tf_hybrid_loss()
         
         history = {'loss': [], 'val_loss': [], 'mae': [], 'val_mae': []}
         
