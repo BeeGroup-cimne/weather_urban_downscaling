@@ -134,6 +134,7 @@ services:
     image: weather_thesis:tf
     container_name: weather_data_prep
     volumes:
+      - ./:/app
       - ./data:/app/data
       - ./experiments:/app/experiments
     environment:
