@@ -2,9 +2,9 @@
 torch==2.1.2+cu118
 torchvision==0.16.2+cu118
 torchaudio==2.1.2+cu118
+numpy
 mamba-ssm>=1.1.1
 causal-conv1d>=1.1.0
-numpy
 pandas
 xarray
 zarr
@@ -25,4 +25,3 @@ pyproj
 torchviz
 pydot
 graphviz
-

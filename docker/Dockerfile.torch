@@ -5,6 +5,7 @@ LABEL maintainer="your-email@example.com"
 LABEL description="PyTorch environment for Weather Urban Downscaling with Mamba SSM"
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PIP_NO_BUILD_ISOLATION=1
 WORKDIR /app
 
 # Install system dependencies
