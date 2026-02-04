@@ -69,19 +69,23 @@ class DownsrUNetMamba(nn.Module):
         _, c_out, h_out, w_out = y.shape
         return y.view(b, t, c_out, h_out, w_out)
 
+    def resize_5d(self, x, size):
+        """Resize 5D tensor (B, T, C, H, W) to target spatial size."""
+        b, t, c, h, w = x.shape
+        if (h, w) == size:
+            return x
+        x = x.view(b * t, c, h, w)
+        x = F.interpolate(x, size=size, mode="bilinear", align_corners=False)
+        return x.view(b, t, c, size[0], size[1])
+
     def forward(self, x_dyn, x_static):
         # x_dyn: (Batch, Time, C_dyn, H, W)
         # x_static: (Batch, Time, C_st, H, W)
         
         # If static grid is HR and dynamic is LR, downsample static to match dynamic.
         if x_static.shape[-2:] != x_dyn.shape[-2:]:
-            b, t, c, h, w = x_static.shape
             target_h, target_w = x_dyn.shape[-2], x_dyn.shape[-1]
-            x_static = x_static.view(b * t, c, h, w)
-            x_static = F.interpolate(
-                x_static, size=(target_h, target_w), mode="bilinear", align_corners=False
-            )
-            x_static = x_static.view(b, t, c, target_h, target_w)
+            x_static = self.resize_5d(x_static, (target_h, target_w))
 
         # 1. Concatenate Dynamic + Static along Channels
         x = torch.cat([x_dyn, x_static], dim=2) # Dim 2 is channels in (B, T, C, H, W)
@@ -95,7 +99,12 @@ class DownsrUNetMamba(nn.Module):
         p2 = self.time_distributed(self.pool2, c2)
         
         c3 = self.time_distributed(self.enc3, p2)
-        p3 = self.time_distributed(self.pool3, c3)
+        if c3.shape[-2] < 2 or c3.shape[-1] < 2:
+            p3 = c3
+            skip_pool3 = True
+        else:
+            p3 = self.time_distributed(self.pool3, c3)
+            skip_pool3 = False
         
         # 3. Mamba Bottleneck
         # TF Shape: (Batch, Time, H, W, C) -> Flattened to (Batch, T*H*W, C)
@@ -120,7 +129,11 @@ class DownsrUNetMamba(nn.Module):
         # 4. Decoder (Time Distributed)
         
         # Up 3
-        u3 = self.time_distributed(self.up3, x_neck)
+        if skip_pool3:
+            u3 = x_neck
+        else:
+            u3 = self.time_distributed(self.up3, x_neck)
+        u3 = self.resize_5d(u3, (c3.shape[-2], c3.shape[-1]))
         # Resize/Crop check optional, but Upsample should match if shapes are powers of 2.
         # Concatenate with skip connection c3
         u3 = torch.cat([u3, c3], dim=2) 
@@ -128,11 +141,13 @@ class DownsrUNetMamba(nn.Module):
         
         # Up 2
         u2 = self.time_distributed(self.up2, d3)
+        u2 = self.resize_5d(u2, (c2.shape[-2], c2.shape[-1]))
         u2 = torch.cat([u2, c2], dim=2)
         d2 = self.time_distributed(self.dec2, u2)
         
         # Up 1
         u1 = self.time_distributed(self.up1, d2)
+        u1 = self.resize_5d(u1, (c1.shape[-2], c1.shape[-1]))
         u1 = torch.cat([u1, c1], dim=2)
         d1 = self.time_distributed(self.dec1, u1)
         
