@@ -216,7 +216,7 @@ python -m scripts.print_active_config
 
 ```bash
 # Train with patches (useful for large grids)
-python scripts/train_tiles.py --model-type unet --epochs 50 --temporal-sampler weighted
+python scripts/train_tiles.py --model-type unet --epochs 50 --temporal-sampler weighted --temporal-season-balance
 
 # Tile-based ablation
 python scripts/run_ablation_tiles.py --model-type mamba --epochs 30

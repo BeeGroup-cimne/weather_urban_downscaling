@@ -33,10 +33,11 @@ def main():
     parser.add_argument("--patch-size", type=int, default=96)
     parser.add_argument("--patches-per-epoch", type=int, default=2000)
     parser.add_argument("--val-patches", type=int, default=200)
-    parser.add_argument("--sampler", default="static_weighted", choices=["static_weighted", "uniform"])
+    parser.add_argument("--sampler", default="static_weighted", choices=["static_weighted", "uniform", "error_weighted"])
     parser.add_argument("--temporal-stride", type=int, default=1)
     parser.add_argument("--temporal-sampler", default="uniform", choices=["uniform", "weighted", "weighted_station"])
     parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--temporal-season-balance", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     args = parser.parse_args()
 
@@ -49,6 +50,7 @@ def main():
     Config.TEMPORAL_SAMPLER = args.temporal_sampler
     Config.LEARNING_RATE = args.learning_rate
     Config.EPOCHS = args.epochs
+    Config.TEMPORAL_SEASON_BALANCE = args.temporal_season_balance
 
     print("🧩 Tile-based training")
     print(f"   Model: {args.model_type}")

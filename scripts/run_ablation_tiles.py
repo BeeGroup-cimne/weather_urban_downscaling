@@ -36,6 +36,7 @@ def main():
     parser.add_argument("--temporal-stride", type=int, default=1)
     parser.add_argument("--temporal-sampler", default="uniform", choices=["uniform", "weighted", "weighted_station"])
     parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--temporal-season-balance", action="store_true")
     args = parser.parse_args()
 
     # Tile config overrides
@@ -46,6 +47,7 @@ def main():
     Config.TEMPORAL_STRIDE = args.temporal_stride
     Config.TEMPORAL_SAMPLER = args.temporal_sampler
     Config.EPOCHS = args.epochs
+    Config.TEMPORAL_SEASON_BALANCE = args.temporal_season_balance
 
     steps_per_epoch = max(1, args.patches_per_epoch // Config.BATCH_SIZE)
     Config.MAX_STEPS_PER_EPOCH = steps_per_epoch

@@ -254,6 +254,19 @@ class TileDataPipeline:
 
         # Temporal weighted sampling (optional)
         self._build_time_weights(da_hr, hr_time)
+        season_balance = bool(getattr(self.cfg, "TEMPORAL_SEASON_BALANCE", False))
+        times_pd = pd.to_datetime(ds[lr_time].values)
+
+        def _season_index(times_idx):
+            # DJF=0, MAM=1, JJA=2, SON=3
+            months = times_idx.month
+            seasons = np.zeros_like(months)
+            seasons[(months >= 3) & (months <= 5)] = 1
+            seasons[(months >= 6) & (months <= 8)] = 2
+            seasons[(months >= 9) & (months <= 11)] = 3
+            return seasons
+
+        seasons = _season_index(times_pd)
 
         def _sample_top_left():
             if sampler == "static_weighted" and self.weight_cdf is not None:
@@ -263,17 +276,29 @@ class TileDataPipeline:
             return self._sample_patch_top_left(hr_h, hr_w, patch_h, patch_w, sampler="uniform")
 
         def _sample_time(start_i, end_i):
-            # choose a sequence start, optionally weighted
+            max_start = end_i - seq_len
+            if max_start <= start_i:
+                return start_i
+
+            candidates = np.arange(start_i, max_start)
+            if candidates.size == 0:
+                return start_i
+
+            if season_balance:
+                season_ids = [0, 1, 2, 3]
+                available = [s for s in season_ids if np.any(seasons[candidates] == s)]
+                if available:
+                    chosen = self.rng.choice(available)
+                    candidates = candidates[seasons[candidates] == chosen]
+                    if candidates.size == 0:
+                        candidates = np.arange(start_i, max_start)
+
             if self.time_cdf is not None:
-                r = self.rng.random()
-                idx = int(np.searchsorted(self.time_cdf, r, side="right"))
-                idx = min(idx, self.time_cdf.size - 1)
-                t0 = idx
-            else:
-                t0 = int(self.rng.integers(start_i, end_i - seq_len))
-            # align to split window
-            t0 = max(start_i, min(t0, end_i - seq_len))
-            return t0
+                weights = self.time_weight[candidates]
+                weights = weights / np.sum(weights)
+                return int(self.rng.choice(candidates, p=weights))
+
+            return int(self.rng.choice(candidates))
 
         # Generator
         def generator(start_i, end_i, samples):
