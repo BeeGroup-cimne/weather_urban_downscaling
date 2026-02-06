@@ -13,6 +13,10 @@ The current server target is **Ubuntu 24.04.3 LTS + NVIDIA A10 (22GB)** using Do
 
 *   **Big Data Pipeline**: A robust ETL engine built with `xarray`, `dask`, and `zarr` to process large climate data efficiently.
     *   *Automatic Static Feature Generation*: Calculates urban indices (SVF, Roughness, Density) on the fly.
+*   **Temporal Sampling Controls**: Sequence stride, weighted sampling, and optional seasonal balancing to better cover rare dynamics.
+    *   Optional **station-weighted sampling** (GRIB) with automatic fallback to HR-derived weights.
+*   **Tile-Based Training (Optional)**: Patch sampling for large grids with uniform, static-weighted, or error-weighted strategies.
+*   **Data Health & Repair**: Built-in NaN checks and fast Zarr repair utilities.
 *   **Hybrid Loss Function**: Combines **MSE** (Numerical Accuracy) and **SSIM** (Structural Similarity) to produce sharp, visually coherent maps. `Loss = (1-α)*MSE + α*SSIM`.
 *   **Multi-Model Support**:
     *   **U-Net** (Baseline)
@@ -66,14 +70,14 @@ mkdir -p data/processed/era5land data/raw
 # 3. Copy your data files (see Data Requirements section below)
 
 # 4. Build Docker images
-docker-compose build
+docker compose build
 
 # 5. Run training
 # TensorFlow (default):
-docker-compose run tf-trainer
+docker compose run tf-trainer
 
 # PyTorch (experimental):
-docker-compose run torch-trainer
+docker compose run torch-trainer
 
 # With GPU support (requires nvidia-docker):
 # Use docker-compose.gpu-optimized.yml (see GPU Server Quick Start)
@@ -90,6 +94,7 @@ data/
 ├── processed/
 │   ├── estaciones_interpoladas_final.nc   # HR target (interpolated stations)
 │   ├── weather_static_FINAL_stations.zarr/ # Static features (buildings, etc.)
+│   ├── stations_t2m.grib                 # Optional station GRIB for weighted sampling
 │   └── era5land/
 │       └── lr_2017.grib                   # LR input (ERA5-Land)
 └── raw/
@@ -123,14 +128,24 @@ data/
 ├── docker-compose.gpu-optimized.yml # GPU server orchestration (Compose v2)
 ├── scripts/
 │   ├── run_ablation.py       # Main experimentation script (TF)
+│   ├── run_ablation_tiles.py # Ablation on tile-based pipeline
 │   ├── gpu_server_train.py   # GPU-optimized TF training
+│   ├── train_tiles.py        # Tile-based training (TF)
 │   ├── train_torch.py        # PyTorch training (baseline)
 │   ├── torch_gpu_train.py    # PyTorch Mamba training (GPU)
 │   ├── run_mamba_seq6.py     # Mamba experiment SEQ_LEN=6
 │   ├── run_mamba_seq12.py    # Mamba experiment SEQ_LEN=12
-│   └── check_data_health.py  # Cache/NaN validation
+│   ├── run_inference.py      # Fast inference for saved models
+│   ├── evaluate_test_set.py  # Quick test-set evaluation
+│   ├── overfit_sanity.py     # Ultra-rapid sanity check
+│   ├── check_data_health.py  # Cache/NaN validation
+│   ├── repair_zarr_nans.py   # Fast NaN repair + stats recompute
+│   ├── build_error_map.py    # Build error map for tile sampling
+│   └── fig_tiles_sampling.py # Visualize tile sampling
 ├── src/
 │   ├── data_loader.py      # BigDataPipeline (ETL & Generators)
+│   ├── data_loader_tiles.py# Patch-based pipeline (optional)
+│   ├── optimized_data_pipeline.py # Streaming pipeline for GPU server
 │   ├── models_legacy.py    # TF Models (ReLU, No-BN -> Sharp Results)
 │   ├── tf_engine/          # Refactored TF components
 │   └── torch_engine/       # PyTorch Mamba Utilities
@@ -153,11 +168,12 @@ The main script uses the **Standard/Legacy** methodology which ensures high shar
 python train.py
 
 # Docker:
-docker-compose run tf-trainer
+docker compose run tf-trainer
 ```
 
 *   **Pipeline**: Automatically generates `data/processed/static_processed.npy` if missing.
 *   **Models**: Trains U-Net + ConvLSTM (Transformer disabled on A10 due to OOM).
+*   **Resume**: If checkpoints exist (GPU server), training resumes from the last saved epoch.
 
 ### 2. Ablation Study
 
@@ -168,13 +184,51 @@ To compare multiple architectures (U-Net vs LSTM vs Mamba) under identical condi
 python scripts/run_ablation.py
 
 # Docker:
-docker-compose run tf-trainer python scripts/run_ablation.py
+docker compose run tf-trainer python scripts/run_ablation.py
 ```
 
 *   **Outputs**: Generates `experiments/ablation_summary.csv` and comparative plots.
 *   **Note**: This script has been aligned to use the exact same data pipeline and "Legacy" architecture as `train.py` to ensure fair comparison.
 
-### 3. PyTorch (Experimental)
+### 3. Data Health & Fast Repair
+
+```bash
+# Check for NaNs and cache consistency
+python -m scripts.check_data_health
+
+# Repair NaNs in Zarr cache and recompute stats
+python -m scripts.repair_zarr_nans
+```
+
+### 4. Overfit Sanity Check (Ultra-Rapid)
+
+```bash
+python -m scripts.overfit_sanity --model-type mamba --epochs 20 --train-batches 4 --val-batches 2
+```
+
+### 4.1 Active Config Snapshot
+
+```bash
+python -m scripts.print_active_config
+```
+
+### 5. Tile-Based Training (Optional)
+
+```bash
+# Train with patches (useful for large grids)
+python scripts/train_tiles.py --model-type unet --epochs 50
+
+# Tile-based ablation
+python scripts/run_ablation_tiles.py --model-type mamba --epochs 30
+```
+
+### 6. Inference
+
+```bash
+python scripts/run_inference.py --model-type unet --model-path experiments/models/UNet_best.h5
+```
+
+### 7. PyTorch (Experimental)
 
 To train the Mamba model using PyTorch:
 
@@ -183,10 +237,46 @@ To train the Mamba model using PyTorch:
 python scripts/train_torch.py
 
 # Docker:
-docker-compose run torch-trainer
+docker compose run torch-trainer
 ```
 
 *   **Features**: Implements a custom 5D-capable Mamba block and the Hybrid (MSE+SSIM) loss in PyTorch.
+
+---
+
+## ⏱️ Temporal Sampling Options
+
+These options live in `config/config.py` and `config/gpu_server_config.py`:
+
+```python
+TEMPORAL_STRIDE = 1                 # sample every N steps (1 = contiguous)
+TEMPORAL_SAMPLER = "uniform"        # "uniform" | "weighted" | "weighted_station"
+TEMPORAL_WEIGHT_GAMMA = 1.5         # emphasize rare dynamics (>=1)
+TEMPORAL_MIN_PROB = 1e-6            # avoid zero-probability
+TEMPORAL_SEASON_BALANCE = False     # True = DJF/MAM/JJA/SON balancing
+STATION_GRIB_PATH = "data/processed/stations_t2m.grib"
+```
+
+Notes:
+*   `weighted` uses HR temporal gradients as weights.
+*   `weighted_station` uses station GRIB if available, otherwise falls back to HR.
+
+---
+
+## 🧩 Tile Training Options (Optional)
+
+```python
+PATCH_SIZE = (96, 96)
+PATCHES_PER_EPOCH = 2000
+VAL_PATCHES_PER_EPOCH = 200
+TILE_SAMPLER = "static_weighted"  # "uniform" | "static_weighted" | "error_weighted"
+TILE_WEIGHT_ALPHA = 0.85
+TILE_WEIGHT_GAMMA = 1.0
+TILE_MIN_PROB = 1e-6
+TILE_ERROR_MAP_PATH = "experiments/tiles_error_map.npy"
+```
+
+Use `scripts/build_error_map.py` to generate the error map if you want error-weighted sampling.
 
 ---
 
@@ -194,28 +284,28 @@ docker-compose run torch-trainer
 
 ```bash
 # Build all images
-docker-compose build
+docker compose build
 
 # Run TensorFlow trainer
-docker-compose run tf-trainer
+docker compose run tf-trainer
 
 # Run PyTorch trainer
-docker-compose run torch-trainer
+docker compose run torch-trainer
 
 # Run data preprocessing only
-docker-compose run data-prep
+docker compose run data-prep
 
 # Run with custom command
-docker-compose run tf-trainer python -c "from config.config import Config; print(Config.DEVICE)"
+docker compose run tf-trainer python -c "from config.config import Config; print(Config.DEVICE)"
 
 # View logs
-docker-compose logs -f tf-trainer
+docker compose logs -f tf-trainer
 
 # Clean up containers
-docker-compose down
+docker compose down
 
 # Remove images
-docker-compose down --rmi all
+docker compose down --rmi all
 ```
 
 ---
@@ -288,6 +378,12 @@ These are concatenated with the dynamic low-resolution input, allowing the model
 This means the time ranges of HR and LR data don't overlap. Run the diagnostic:
 ```bash
 python scripts/diagnose_time.py
+```
+
+### NaNs in Cache
+If `scripts.check_data_health` reports NaNs:
+```bash
+python -m scripts.repair_zarr_nans
 ```
 
 ### Permission Errors on Mac
@@ -416,3 +512,14 @@ Urban heat island mapping requires high‑resolution temperature fields, yet ava
 - Ubuntu 24.04.3 LTS
 - NVIDIA A10 (22GB)
 - Docker Compose v2 (`docker compose`)
+
+**Recommended Presets (Starting Point):**
+
+| Hardware | BATCH_SIZE | GRAD_ACCUM | SEQ_LEN | MIXED_PRECISION | Notes |
+| -------- | ---------- | ---------- | ------- | --------------- | ----- |
+| A10 22GB | 2 | 2 | 6 | False | Stable baseline for full-frame training |
+| Apple M4 | 2 | 4 | 6 | False | Good stability on MPS, low memory pressure |
+
+Preset files (copy into config as needed):
+- `config/presets/a10.py`
+- `config/presets/m4.py`

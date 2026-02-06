@@ -30,10 +30,12 @@ def build_model(model_type: str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm"])
-    parser.add_argument("--patch-size", type=int, default=128)
+    parser.add_argument("--patch-size", type=int, default=96)
     parser.add_argument("--patches-per-epoch", type=int, default=2000)
     parser.add_argument("--val-patches", type=int, default=200)
     parser.add_argument("--sampler", default="static_weighted", choices=["static_weighted", "uniform"])
+    parser.add_argument("--temporal-stride", type=int, default=1)
+    parser.add_argument("--temporal-sampler", default="uniform", choices=["uniform", "weighted"])
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     args = parser.parse_args()
@@ -43,6 +45,8 @@ def main():
     Config.PATCHES_PER_EPOCH = args.patches_per_epoch
     Config.VAL_PATCHES_PER_EPOCH = args.val_patches
     Config.TILE_SAMPLER = args.sampler
+    Config.TEMPORAL_STRIDE = args.temporal_stride
+    Config.TEMPORAL_SAMPLER = args.temporal_sampler
     Config.LEARNING_RATE = args.learning_rate
     Config.EPOCHS = args.epochs
 

@@ -18,6 +18,8 @@ class TileDataPipeline:
         self.static_norm = None
         self.weight_map = None
         self.weight_cdf = None
+        self.time_weight = None
+        self.time_cdf = None
         self.rng = np.random.default_rng(getattr(self.cfg, "SEED", 42))
 
     def _ensure_cache(self):
@@ -43,12 +45,22 @@ class TileDataPipeline:
             self.static_norm = np.nan_to_num(self.static_norm, nan=0.0, posinf=0.0, neginf=0.0)
         return self.static_norm
 
-    def _build_weight_map(self, sampler="static_weighted"):
-        if sampler != "static_weighted":
+    def _build_weight_map(self, sampler="static_weighted", hr_shape=None):
+        if sampler == "static_weighted":
+            static = self.static_norm
+            # Importance by mean absolute normalized static signal
+            weight = np.mean(np.abs(static), axis=-1)
+        elif sampler == "error_weighted":
+            err_path = getattr(self.cfg, "TILE_ERROR_MAP_PATH", "")
+            if not err_path or not os.path.exists(err_path):
+                print("⚠️ Error-weighted sampler requested but no error map found. Falling back to static_weighted.")
+                return self._build_weight_map("static_weighted", hr_shape=hr_shape)
+            weight = np.load(err_path)
+            if hr_shape and (weight.shape[0] != hr_shape[0] or weight.shape[1] != hr_shape[1]):
+                weight = tf.image.resize(weight[..., None], hr_shape, method="bilinear").numpy()[..., 0]
+        else:
             return None
-        static = self.static_norm
-        # Importance by mean absolute normalized static signal
-        weight = np.mean(np.abs(static), axis=-1)
+
         weight = weight - np.nanmin(weight)
         gamma = float(getattr(self.cfg, "TILE_WEIGHT_GAMMA", 1.0))
         if gamma != 1.0:
@@ -77,6 +89,34 @@ class TileDataPipeline:
         y0 = max(0, min(y0, hr_h - patch_h))
         x0 = max(0, min(x0, hr_w - patch_w))
         return y0, x0
+
+    def _build_time_weights(self, da_hr, time_dim):
+        sampler = getattr(self.cfg, "TEMPORAL_SAMPLER", "uniform")
+        if sampler != "weighted":
+            self.time_cdf = None
+            return None
+        try:
+            # Use mean absolute temporal gradient as importance
+            hr_mean = da_hr.mean(dim=[d for d in da_hr.dims if d != time_dim])
+            grad = hr_mean.diff(time_dim).abs()
+            # pad to match length
+            grad = grad.pad({time_dim: (1, 0)}, mode="constant", constant_values=0.0)
+            w = grad.values.astype(np.float32)
+        except Exception:
+            print("⚠️ No se pudo construir pesos temporales, fallback uniform.")
+            self.time_cdf = None
+            return None
+
+        w = w - np.nanmin(w)
+        gamma = float(getattr(self.cfg, "TEMPORAL_WEIGHT_GAMMA", 1.0))
+        if gamma != 1.0:
+            w = np.power(w, gamma)
+        min_prob = float(getattr(self.cfg, "TEMPORAL_MIN_PROB", 1e-6))
+        w = w + min_prob
+        w = w / np.sum(w)
+        self.time_weight = w
+        self.time_cdf = np.cumsum(w)
+        return w
 
     def get_tf_datasets(self):
         self._ensure_cache()
@@ -146,6 +186,12 @@ class TileDataPipeline:
         # Splits by time
         total_len = ds.sizes[lr_time]
         seq_len = self.cfg.SEQ_LEN
+        stride = int(getattr(self.cfg, "TEMPORAL_STRIDE", 1))
+        if stride < 1:
+            stride = 1
+        if stride > seq_len:
+            print(f"⚠️ TEMPORAL_STRIDE ({stride}) > SEQ_LEN ({seq_len}). Usando stride={seq_len}.")
+            stride = seq_len
 
         def _time_indices(times, start, end):
             times = pd.to_datetime(times).values
@@ -166,10 +212,13 @@ class TileDataPipeline:
 
         sampler = getattr(self.cfg, "TILE_SAMPLER", "static_weighted")
         mix_alpha = float(getattr(self.cfg, "TILE_WEIGHT_ALPHA", 0.85))
-        if sampler == "static_weighted":
-            self._build_weight_map(sampler=sampler)
+        if sampler in ("static_weighted", "error_weighted"):
+            self._build_weight_map(sampler=sampler, hr_shape=(hr_h, hr_w))
         else:
             self.weight_cdf = None
+
+        # Temporal weighted sampling (optional)
+        self._build_time_weights(da_hr, hr_time)
 
         def _sample_top_left():
             if sampler == "static_weighted" and self.weight_cdf is not None:
@@ -178,12 +227,25 @@ class TileDataPipeline:
                     return self._sample_patch_top_left(hr_h, hr_w, patch_h, patch_w, sampler="static_weighted")
             return self._sample_patch_top_left(hr_h, hr_w, patch_h, patch_w, sampler="uniform")
 
+        def _sample_time(start_i, end_i):
+            # choose a sequence start, optionally weighted
+            if self.time_cdf is not None:
+                r = self.rng.random()
+                idx = int(np.searchsorted(self.time_cdf, r, side="right"))
+                idx = min(idx, self.time_cdf.size - 1)
+                t0 = idx
+            else:
+                t0 = int(self.rng.integers(start_i, end_i - seq_len))
+            # align to split window
+            t0 = max(start_i, min(t0, end_i - seq_len))
+            return t0
+
         # Generator
         def generator(start_i, end_i, samples):
             for _ in range(samples):
                 if end_i - start_i <= seq_len + 1:
                     break
-                t0 = int(self.rng.integers(start_i, end_i - seq_len))
+                t0 = _sample_time(start_i, end_i)
                 y0, x0 = _sample_top_left()
 
                 # LR slice (mapped)
@@ -191,15 +253,16 @@ class TileDataPipeline:
                 lr_x0 = int(round(x0 * ratio_x))
                 lr_y0 = max(0, min(lr_y0, lr_h - lr_ph))
                 lr_x0 = max(0, min(lr_x0, lr_w - lr_pw))
+                t_idx = slice(t0, t0 + seq_len * stride, stride)
 
                 if lr_var:
-                    x_lr = da_lr.isel({lr_time: slice(t0, t0 + seq_len),
+                    x_lr = da_lr.isel({lr_time: t_idx,
                                        lr_lat: slice(lr_y0, lr_y0 + lr_ph),
                                        lr_lon: slice(lr_x0, lr_x0 + lr_pw)}) \
                                .transpose(lr_time, lr_lat, lr_lon, lr_var) \
                                .values
                 else:
-                    x_lr = da_lr.isel({lr_time: slice(t0, t0 + seq_len),
+                    x_lr = da_lr.isel({lr_time: t_idx,
                                        lr_lat: slice(lr_y0, lr_y0 + lr_ph),
                                        lr_lon: slice(lr_x0, lr_x0 + lr_pw)}) \
                                .transpose(lr_time, lr_lat, lr_lon) \
@@ -211,7 +274,7 @@ class TileDataPipeline:
                     x_lr = x_lr[:, :, ::-1, :]
 
                 # HR slice
-                y_hr = da_hr.isel({hr_time: slice(t0, t0 + seq_len),
+                y_hr = da_hr.isel({hr_time: t_idx,
                                    hr_lat: slice(y0, y0 + patch_h),
                                    hr_lon: slice(x0, x0 + patch_w)}) \
                            .transpose(hr_time, hr_lat, hr_lon) \
@@ -233,14 +296,15 @@ class TileDataPipeline:
         train_samples = int(getattr(self.cfg, "PATCHES_PER_EPOCH", 2000))
         val_samples = int(getattr(self.cfg, "VAL_PATCHES_PER_EPOCH", max(1, train_samples // 10)))
 
+        prefetch_buf = getattr(self.cfg, "PREFETCH_BUFFER_SIZE", 2)
         train_ds = tf.data.Dataset.from_generator(
             lambda: generator(train_start, train_end, train_samples),
             output_signature=((spec_lr, spec_st), spec_hr)
-        ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(self.cfg.PREFETCH_BUFFER_SIZE)
+        ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
 
         val_ds = tf.data.Dataset.from_generator(
             lambda: generator(val_start, val_end, val_samples),
             output_signature=((spec_lr, spec_st), spec_hr)
-        ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(self.cfg.PREFETCH_BUFFER_SIZE)
+        ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
 
         return train_ds, val_ds

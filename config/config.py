@@ -78,6 +78,24 @@ class Config:
     CHANNELS = 9
     STATIC_CHANNELS = 13
 
+    # ---------------------------------------------------------
+    # 5. TILE-BASED TRAINING (Optional)
+    # ---------------------------------------------------------
+    PATCH_SIZE = (96, 96)
+    PATCHES_PER_EPOCH = 2000
+    VAL_PATCHES_PER_EPOCH = 200
+    TILE_SAMPLER = "static_weighted"  # "static_weighted" | "uniform" | "error_weighted"
+    TILE_WEIGHT_ALPHA = 0.85          # mix of weighted vs uniform sampling
+    TILE_WEIGHT_GAMMA = 1.0           # emphasize extremes in weight map
+    TILE_MIN_PROB = 1e-6
+    TILE_ERROR_MAP_PATH = str(BASE_DIR / "experiments" / "tiles_error_map.npy")
+    TEMPORAL_STRIDE = 1
+    TEMPORAL_SAMPLER = "uniform"  # "uniform" | "weighted" | "weighted_station"
+    TEMPORAL_WEIGHT_GAMMA = 1.0
+    TEMPORAL_MIN_PROB = 1e-6
+    TEMPORAL_SEASON_BALANCE = False
+    STATION_GRIB_PATH = str(BASE_DIR / "data" / "processed" / "stations_t2m.grib")
+
 
 # Configuración Global de Semillas (Solo si las librerías están disponibles)
 np.random.seed(Config.SEED)
