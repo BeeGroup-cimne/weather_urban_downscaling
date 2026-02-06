@@ -47,15 +47,15 @@ def main():
     # Load stats for de-normalization
     mean_hr, std_hr = load_stats()
 
-    # Build and load model
-    model = build_model(args.model_type)
-    model.load_weights(args.model_path)
-
-    # Build pipeline and test dataset
+    # Build pipeline and test dataset (updates Config shapes)
     pipeline = BigDataPipeline(Config)
     pipeline.process_static_data()
     pipeline.run_etl_process()
     _, _, test_ds = pipeline.get_tf_datasets(include_test=True)
+
+    # Build and load model after Config shapes are updated
+    model = build_model(args.model_type)
+    model.load_weights(args.model_path)
 
     # Optional SSIM
     ssim_fn = None

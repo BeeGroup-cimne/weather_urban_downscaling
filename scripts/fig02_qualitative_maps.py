@@ -66,10 +66,6 @@ def main():
             print("Model checkpoint not found. Provide --model-path or use --skip-model.")
             return 2
 
-        # Build and load model
-        model = build_model(args.model_type)
-        model.load_weights(args.model_path)
-
     # Resolve static channel name -> index
     static_names = []
     try:
@@ -96,7 +92,7 @@ def main():
     else:
         print(f"ℹ️ Static channel selected: {st_chan} (no names available)")
 
-    # Load one batch from validation set
+    # Load one batch from validation set (updates Config.LR_SHAPE/HR_SHAPE)
     pipeline = BigDataPipeline(Config)
     pipeline.process_static_data()
     pipeline.run_etl_process()
@@ -106,6 +102,9 @@ def main():
     # Predict (or baseline)
     y_pred = None
     if not args.skip_model:
+        # Build and load model after Config shapes are updated
+        model = build_model(args.model_type)
+        model.load_weights(args.model_path)
         y_pred = model((x_lr, x_st), training=False)
 
     # Select last timestep for visualization

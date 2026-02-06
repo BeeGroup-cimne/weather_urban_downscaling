@@ -8,6 +8,7 @@ import os
 import sys
 import gc
 import time
+import json
 import numpy as np
 import tensorflow as tf
 from typing import Dict, Any
@@ -21,7 +22,7 @@ from config.runtime import Config
 from src.optimized_data_pipeline import OptimizedBigDataPipeline
 from src.models_legacy import ModelZoo
 from src.models.transformer_optimized import build_lightweight_transformer_unet
-from src.utils_legacy import run_experiment, notify_completion
+from src.utils import notify_completion
 from src.losses import tf_hybrid_loss
 
 class GPUOptimizedTrainer:
@@ -131,6 +132,7 @@ class GPUOptimizedTrainer:
             start_epoch = 0
             history_seed = None
             log_path = f"experiments/logs/{model_name}_gpu_optimized_log.csv"
+            state_path = f"experiments/logs/{model_name}_gpu_optimized_state.json"
             if os.path.exists(log_path):
                 try:
                     import pandas as pd
@@ -145,8 +147,27 @@ class GPUOptimizedTrainer:
                     print(f"🔁 Resume enabled for {model_name}: starting at epoch {start_epoch + 1}")
                 except Exception as e:
                     print(f"⚠️ Could not load history for resume: {e}")
+
+            if os.path.exists(state_path):
+                try:
+                    with open(state_path, "r") as f:
+                        state = json.load(f)
+                    if isinstance(state, dict):
+                        history_seed = state.get("history", history_seed)
+                        last_epoch = int(state.get("epoch", start_epoch))
+                        start_epoch = max(start_epoch, last_epoch)
+                        print(f"🔁 Resume state loaded for {model_name}: starting at epoch {start_epoch + 1}")
+                except Exception as e:
+                    print(f"⚠️ Could not load resume state: {e}")
             
             model_path = f"experiments/models/{model_name}_gpu_optimized.h5"
+            last_weights_path = f"experiments/models/{model_name}_gpu_optimized_last.weights.h5"
+            if os.path.exists(last_weights_path):
+                try:
+                    model.load_weights(last_weights_path)
+                    print(f"🔁 Loaded last weights from {last_weights_path}")
+                except Exception as e:
+                    print(f"⚠️ Could not load last weights for resume: {e}")
             if os.path.exists(model_path):
                 try:
                     model.load_weights(model_path)
@@ -194,7 +215,11 @@ class GPUOptimizedTrainer:
             # Entrenamiento con gradient accumulation
             history = self._train_with_gradient_accumulation(
                 model, train_ds, val_ds, callbacks, model_name,
-                start_epoch=start_epoch, history_seed=history_seed
+                start_epoch=start_epoch,
+                history_seed=history_seed,
+                state_path=state_path,
+                last_weights_path=last_weights_path,
+                log_path=log_path
             )
             
             print(f"✅ {model_name} entrenado exitosamente")
@@ -223,7 +248,19 @@ class GPUOptimizedTrainer:
             print(f"❌ Error entrenando {model_name}: {e}")
             raise
     
-    def _train_with_gradient_accumulation(self, model, train_ds, val_ds, callbacks, model_name, start_epoch=0, history_seed=None):
+    def _train_with_gradient_accumulation(
+        self,
+        model,
+        train_ds,
+        val_ds,
+        callbacks,
+        model_name,
+        start_epoch=0,
+        history_seed=None,
+        state_path=None,
+        last_weights_path=None,
+        log_path=None,
+    ):
         """Implementar gradient accumulation para batches efectivos más grandes"""
         
         # Crear datasets más pequeños para accumulation
@@ -238,7 +275,23 @@ class GPUOptimizedTrainer:
         if start_epoch >= epochs:
             print(f"✅ {model_name} already completed {epochs} epochs. Skipping.")
             return history
-        
+
+        def _save_state(epoch_idx):
+            if not state_path:
+                return
+            try:
+                payload = {
+                    "epoch": int(epoch_idx),
+                    "history": history,
+                }
+                tmp_path = f"{state_path}.tmp"
+                os.makedirs(os.path.dirname(state_path), exist_ok=True)
+                with open(tmp_path, "w") as f:
+                    json.dump(payload, f)
+                os.replace(tmp_path, state_path)
+            except Exception as e:
+                print(f"⚠️ No se pudo guardar estado de resume: {e}")
+
         for epoch in range(start_epoch, epochs):
             print(f"\n📅 Epoch {epoch + 1}/{epochs}")
             
@@ -302,6 +355,22 @@ class GPUOptimizedTrainer:
             
             print(f"   📊 Train Loss: {avg_train_loss:.4f}, MAE: {avg_train_mae:.4f}")
             print(f"   📊 Val Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
+
+            # Save last weights + resume state
+            if last_weights_path:
+                try:
+                    model.save_weights(last_weights_path)
+                except Exception as e:
+                    print(f"⚠️ No se pudo guardar last weights: {e}")
+            _save_state(epoch + 1)
+
+            if log_path:
+                try:
+                    import pandas as pd
+                    df = pd.DataFrame(history)
+                    df.to_csv(log_path, index=False)
+                except Exception as e:
+                    print(f"⚠️ No se pudo actualizar log CSV: {e}")
             
             # Early stopping manual
             if len(history['val_loss']) > self.config.EARLY_STOPPING_PATIENCE:

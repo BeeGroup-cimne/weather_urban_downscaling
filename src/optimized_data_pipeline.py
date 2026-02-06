@@ -166,6 +166,28 @@ class OptimizedBigDataPipeline:
             if self.config.HR_SHAPE != (real_hr_h, real_hr_w):
                 print(f"⚠️ HR_SHAPE: {self.config.HR_SHAPE} -> ({real_hr_h}, {real_hr_w})")
                 self.config.HR_SHAPE = (real_hr_h, real_hr_w)
+
+            # Detect longitude order mismatch and align LR with HR
+            def _order(vals):
+                diffs = np.diff(vals)
+                if np.all(diffs > 0):
+                    return "asc"
+                if np.all(diffs < 0):
+                    return "desc"
+                return "unknown"
+
+            try:
+                lr_lon_vals = ds[lr_lon].values
+                hr_lon_vals = ds[hr_x].values
+                lr_order = _order(lr_lon_vals)
+                hr_order = _order(hr_lon_vals)
+            except Exception:
+                lr_order = hr_order = "unknown"
+
+            flip_lr_lon = False
+            if lr_order != "unknown" and hr_order != "unknown" and lr_order != hr_order:
+                flip_lr_lon = True
+                print(f"⚠️ Longitud order mismatch (LR={lr_order}, HR={hr_order}). Aplicando flip LR en lon.")
             
             # Cargar datos estáticos
             if self.static_processed is None:
@@ -246,6 +268,9 @@ class OptimizedBigDataPipeline:
                             .values
                         if x_lr.ndim == 3:
                             x_lr = x_lr[..., np.newaxis]
+
+                    if flip_lr_lon:
+                        x_lr = x_lr[:, :, ::-1, :]
                     
                     y_hr = da_hr.isel({hr_time: slice(i, i + seq_len)}) \
                         .transpose(hr_time, hr_y, hr_x) \
@@ -352,7 +377,7 @@ class OptimizedBigDataPipeline:
         if training:
             # Shuffle con buffer pequeño para ahorrar memoria
             dataset = dataset.shuffle(
-                buffer_size=min(self.config.SHUFFLE_BUFFER_SIZE, len(x_data)),
+                buffer_size=min(self.config.SHUFFLE_BUFFER_SIZE, len(x_lr)),
                 seed=self.config.SEED
             )
         

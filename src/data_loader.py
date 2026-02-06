@@ -482,6 +482,28 @@ class BigDataPipeline:
             print(f"   ⚠️ CORRECCIÓN HR_SHAPE: {self.cfg.HR_SHAPE} -> ({real_hr_h}, {real_hr_w}).")
             self.cfg.HR_SHAPE = (real_hr_h, real_hr_w)
 
+        # Detectar orientación de longitudes y alinear LR con HR si es necesario
+        def _order(vals):
+            diffs = np.diff(vals)
+            if np.all(diffs > 0):
+                return "asc"
+            if np.all(diffs < 0):
+                return "desc"
+            return "unknown"
+
+        try:
+            lr_lon_vals = ds[lr_lon].values
+            hr_lon_vals = ds[hr_x].values
+            lr_order = _order(lr_lon_vals)
+            hr_order = _order(hr_lon_vals)
+        except Exception:
+            lr_order = hr_order = "unknown"
+
+        flip_lr_lon = False
+        if lr_order != "unknown" and hr_order != "unknown" and lr_order != hr_order:
+            flip_lr_lon = True
+            print(f"   ⚠️ Longitud order mismatch (LR={lr_order}, HR={hr_order}). Aplicando flip LR en lon.")
+
         # --- 🛑 2. ACTUALIZACIÓN DE CONFIGURACIÓN 🛑 ---
         # Ahora actualizamos Config usando las dimensiones del LR, no las del HR
         if self.cfg.LR_SHAPE != (real_lr_h, real_lr_w):
@@ -568,6 +590,9 @@ class BigDataPipeline:
                                  .transpose('time', lr_lat, lr_lon) \
                                  .values
                      if x_lr.ndim == 3: x_lr = x_lr[..., np.newaxis]
+                
+                if flip_lr_lon:
+                    x_lr = x_lr[:, :, ::-1, :]
                 
                 # 2. HR TARGET
                 # Usamos los nombres detectados para HR (hr_y, hr_x)

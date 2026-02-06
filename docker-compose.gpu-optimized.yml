@@ -145,26 +145,7 @@ services:
           memory: 16G
           cpus: '4'
     command: >
-      python -c "
-      import sys;
-      sys.path.append('/app');
-      from config.gpu_server_config import GPUServerConfig;
-      from src.optimized_data_pipeline import OptimizedBigDataPipeline;
-      
-      print('🚀 Iniciando data preprocessing optimizado...');
-      GPUServerConfig.print_memory_info();
-      
-      # Procesar datos estáticos
-      pipeline = OptimizedBigDataPipeline(GPUServerConfig);
-      pipeline.process_static_data();
-      
-      # Procesar datos temporales
-      from src.data_loader import BigDataPipeline;
-      original_pipeline = BigDataPipeline(GPUServerConfig);
-      original_pipeline.run_etl_process();
-      
-      print('✅ Data preprocessing complete!');
-      "
+      python -c "import sys; sys.path.append('/app'); from config.gpu_server_config import GPUServerConfig; from src.optimized_data_pipeline import OptimizedBigDataPipeline; print('🚀 Iniciando data preprocessing optimizado...'); GPUServerConfig.print_memory_info(); pipeline = OptimizedBigDataPipeline(GPUServerConfig); pipeline.process_static_data(); from src.data_loader import BigDataPipeline; original_pipeline = BigDataPipeline(GPUServerConfig); original_pipeline.run_etl_process(); print('✅ Data preprocessing complete!');"
     restart: "no"
     profiles:
       - preprocessing
