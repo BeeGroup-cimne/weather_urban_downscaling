@@ -58,6 +58,9 @@ def main():
 
     pipeline = TileDataPipeline(Config)
     train_ds, val_ds = pipeline.get_tf_datasets()
+    # Repeat to avoid dataset exhaustion across epochs
+    train_ds = train_ds.repeat()
+    val_ds = val_ds.repeat()
 
     model = build_model(args.model_type)
 
