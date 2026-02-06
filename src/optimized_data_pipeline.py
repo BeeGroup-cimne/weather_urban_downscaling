@@ -118,7 +118,7 @@ class OptimizedBigDataPipeline:
                 
         return static_norm.astype(np.float32)
     
-    def get_tf_datasets(self) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
+    def get_tf_datasets(self, include_test: bool = False) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
         """Crear TensorFlow datasets con optimización de memoria (streaming)"""
         print("📦 Creando TF datasets optimizados...")
         
@@ -206,13 +206,18 @@ class OptimizedBigDataPipeline:
                 end_idx = int(np.searchsorted(times, end, side="left"))
                 return start_idx, end_idx
 
+            test_start = test_end = None
             if getattr(self.config, "SPLIT_MODE", "fraction") == "time":
                 try:
                     times = ds[lr_time].values
                     train_start, train_end = _time_indices(times, self.config.TRAIN_START, self.config.TRAIN_END)
                     val_start, val_end = _time_indices(times, self.config.VAL_START, self.config.VAL_END)
+                    if include_test:
+                        test_start, test_end = _time_indices(times, self.config.TEST_START, self.config.TEST_END)
                     print(f"   📂 Dataset (train) range: {train_start} -> {train_end}")
                     print(f"   📂 Dataset (val) range: {val_start} -> {val_end}")
+                    if include_test:
+                        print(f"   📂 Dataset (test) range: {test_start} -> {test_end}")
                 except Exception as e:
                     print(f"⚠️ Time split fallback to fraction due to: {e}")
                     split_idx = int(total_len * self.config.SPLIT_FRACTION)
@@ -221,7 +226,12 @@ class OptimizedBigDataPipeline:
             else:
                 split_idx = int(total_len * self.config.SPLIT_FRACTION)
                 train_start, train_end = 0, split_idx
-                val_start, val_end = split_idx, total_len
+                if include_test:
+                    val_end = int(total_len * 0.9)
+                    val_start = split_idx
+                    test_start, test_end = val_end, total_len
+                else:
+                    val_start, val_end = split_idx, total_len
             
             # Generador streaming para evitar OOM
             def generator(start_i, end_i):
@@ -272,7 +282,15 @@ class OptimizedBigDataPipeline:
                 lambda: generator(val_start, val_end),
                 output_signature=((spec_lr, spec_st), spec_hr)
             ).batch(self.config.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
-            
+
+            if include_test:
+                test_ds = tf.data.Dataset.from_generator(
+                    lambda: generator(test_start, test_end),
+                    output_signature=((spec_lr, spec_st), spec_hr)
+                ).batch(self.config.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
+                print(f"✅ Datasets creados: Train/Val/Test streaming")
+                return train_ds, val_ds, test_ds
+
             print(f"✅ Datasets creados: Train/Val streaming")
             return train_ds, val_ds
             

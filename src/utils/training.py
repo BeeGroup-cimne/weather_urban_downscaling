@@ -3,6 +3,7 @@ import platform
 import datetime
 import matplotlib.pyplot as plt
 import numpy as np
+import tensorflow as tf
 
 from tensorflow.keras.models import Model
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger
@@ -159,6 +160,34 @@ def visualize_results(model, val_ds, title):
         y_pred_real = (y_pred * std_hr) + mean_hr
         y_true_real = (y_true * std_hr) + mean_hr
 
+        def _align_lr_for_plot(lr_up, hr_ref):
+            def _corr(a, b):
+                a = a.flatten()
+                b = b.flatten()
+                if np.std(a) == 0 or np.std(b) == 0:
+                    return -np.inf
+                return np.corrcoef(a, b)[0, 1]
+
+            candidates = {
+                "as_is": lr_up,
+                "rot90": np.rot90(lr_up, 1),
+                "rot180": np.rot90(lr_up, 2),
+                "rot270": np.rot90(lr_up, 3),
+                "flipud": np.flipud(lr_up),
+                "fliplr": np.fliplr(lr_up),
+                "transpose": lr_up.T,
+                "transpose_flipud": np.flipud(lr_up.T),
+                "transpose_fliplr": np.fliplr(lr_up.T),
+            }
+
+            best_name, best_arr, best_score = "as_is", lr_up, -np.inf
+            for name, arr in candidates.items():
+                score = _corr(arr, hr_ref)
+                if score > best_score:
+                    best_score = score
+                    best_name, best_arr = name, arr
+            return best_arr, best_name
+
         # Visualizar primer sample, último frame de la secuencia
         idx = 0
         t = Config.SEQ_LEN - 1 
@@ -166,22 +195,35 @@ def visualize_results(model, val_ds, title):
         plt.figure(figsize=(15, 5))
         plt.suptitle(f"{title} - Sample {idx} Frame {t}")
 
-        # 1. Input LR
+        # 1. Input LR (align for display)
+        def _rotate(arr):
+            deg = int(os.getenv("PLOT_ROTATE", "0")) % 360
+            if deg == 0:
+                return arr
+            return np.rot90(arr, deg // 90)
+
         plt.subplot(1, 3, 1)
         # x_lr shape: (Batch, Time, Lat, Lon, Chan)
-        plt.imshow(x_lr[idx, t, :, :, 0], cmap='viridis',origin='lower') 
+        lr_raw = x_lr[idx, t, :, :, 0]
+        lr_up = tf.image.resize(lr_raw[..., None], Config.HR_SHAPE, method="bilinear").numpy()[..., 0]
+        hr_ref = y_true_real[idx, t, :, :, 0]
+        if hasattr(hr_ref, "numpy"):
+            hr_ref = hr_ref.numpy()
+        lr_disp, lr_tag = _align_lr_for_plot(lr_up, hr_ref)
+        print(f"   ℹ️ LR display alignment: {lr_tag}")
+        plt.imshow(_rotate(lr_disp), cmap='viridis', origin='lower') 
         plt.title("Input Low Res (LR)")
         plt.axis('off')
 
         # 2. Predicción HR
         plt.subplot(1, 3, 2)
-        plt.imshow(y_pred_real[idx, t, :, :, 0], cmap='viridis',origin='lower')
+        plt.imshow(_rotate(y_pred_real[idx, t, :, :, 0]), cmap='viridis',origin='lower')
         plt.title("Prediction (HR)")
         plt.axis('off')
 
         # 3. Ground Truth HR
         plt.subplot(1, 3, 3)
-        plt.imshow(y_true_real[idx, t, :, :, 0], cmap='viridis',origin='lower')
+        plt.imshow(_rotate(y_true_real[idx, t, :, :, 0]), cmap='viridis',origin='lower')
         plt.title("Ground Truth (HR)")
         plt.axis('off')
         

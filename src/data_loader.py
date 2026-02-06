@@ -34,21 +34,34 @@ class BigDataPipeline:
         # Definimos ruta del caché estático
         static_cache_path = self.cfg.STATIC_CACHE_PATH
 
-        if os.path.exists(static_cache_path):
-            print("🗺️ Cargando datos estáticos desde caché (.npy)...")
-            self.ds_static_single = np.load(static_cache_path)
-            print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
-            return
-
         print("🗺️ Procesando e Interpolando datos estáticos (Esto se hará solo una vez)...")
         
         # 1. Abrimos el dataset HR para leer dimensiones y grilla
         # Usamos open_dataset normal para asegurar acceso a todas las variables
         ds_hr = xr.open_dataset(self.cfg.PATH_HR)
+
+        # Si ya existe cache Zarr, preferimos su grilla HR (es la que usa el entrenamiento)
+        cache_hr = None
+        if os.path.exists(self.cache_dir):
+            try:
+                z = xr.open_zarr(self.cache_dir, consolidated=True)
+                if "hr_target" in z:
+                    cache_hr = z["hr_target"]
+            except Exception:
+                cache_hr = None
         
         # --- FIX: DETECCIÓN ROBUSTA DE DIMENSIONES ---
-        # UrbClim usa 'y' y 'x' como dimensiones, no 'latitude'/'longitude'
-        if 'y' in ds_hr.sizes and 'x' in ds_hr.sizes:
+        # Preferir tamaño real del grid lat/lon (si existe y es 2D)
+        if cache_hr is not None and 'latitude' in cache_hr.coords and 'longitude' in cache_hr.coords:
+            lat_c = cache_hr['latitude'].values
+            lon_c = cache_hr['longitude'].values
+            if getattr(lat_c, 'ndim', 1) == 1 and getattr(lon_c, 'ndim', 1) == 1:
+                dim_y, dim_x = lat_c.shape[0], lon_c.shape[0]
+            else:
+                dim_y, dim_x = lat_c.shape
+        elif 'latitude' in ds_hr.coords and hasattr(ds_hr['latitude'], 'ndim') and ds_hr['latitude'].ndim == 2:
+            dim_y, dim_x = ds_hr['latitude'].shape
+        elif 'y' in ds_hr.sizes and 'x' in ds_hr.sizes:
             dim_y = ds_hr.sizes['y']
             dim_x = ds_hr.sizes['x']
         elif 'latitude' in ds_hr.sizes:
@@ -60,14 +73,31 @@ class BigDataPipeline:
             
         print(f" 📏 Dimensiones detectadas HR: {dim_y}x{dim_x}")
 
+        if os.path.exists(static_cache_path):
+            print("🗺️ Cargando datos estáticos desde caché (.npy)...")
+            cached = np.load(static_cache_path)
+            if cached.shape[0] == dim_y and cached.shape[1] == dim_x:
+                self.ds_static_single = cached
+                print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
+                return
+            print(f"   ⚠️ Cache estático desalineado {cached.shape[:2]} != ({dim_y}, {dim_x}). Recalculando...")
+
         # --- GRID PARA INTERPOLACIÓN ---
         # Necesitamos los valores reales de latitud/longitud de cada pixel para saber dónde interpolar
         # Aunque las dimensiones se llamen 'y'/'x', las variables 'latitude'/'longitude' existen
-        grid_y = ds_hr['latitude'].values
-        grid_x = ds_hr['longitude'].values
+        if cache_hr is not None and 'latitude' in cache_hr.coords and 'longitude' in cache_hr.coords:
+            grid_y = cache_hr['latitude'].values
+            grid_x = cache_hr['longitude'].values
+        else:
+            grid_y = ds_hr['latitude'].values
+            grid_x = ds_hr['longitude'].values
         
         # Aplanar para interpolar
-        target_points = np.column_stack((grid_y.ravel(), grid_x.ravel()))
+        if getattr(grid_y, 'ndim', 1) == 1 and getattr(grid_x, 'ndim', 1) == 1:
+            yy, xx = np.meshgrid(grid_y, grid_x, indexing='ij')
+            target_points = np.column_stack((yy.ravel(), xx.ravel()))
+        else:
+            target_points = np.column_stack((grid_y.ravel(), grid_x.ravel()))
         
         # 2. Cargar Static Zarr (tus datos de elevación/landuse)
         ds_static = xr.open_zarr(self.cfg.PATH_STATIC)
@@ -88,6 +118,13 @@ class BigDataPipeline:
             static_layers.append(interp_flat.reshape(dim_y, dim_x))
             
         self.ds_static_single = np.stack(static_layers, axis=-1).astype('float32')
+        if np.isnan(self.ds_static_single).any():
+            print("⚠️ Static data contiene NaNs. Rellenando con media por canal.")
+            ch_mean = np.nanmean(self.ds_static_single, axis=(0, 1), keepdims=True)
+            self.ds_static_single = np.where(
+                np.isnan(self.ds_static_single), ch_mean, self.ds_static_single
+            )
+            self.ds_static_single = np.nan_to_num(self.ds_static_single, nan=0.0, posinf=0.0, neginf=0.0)
         print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
 
         print(f"💾 Guardando caché estático en {static_cache_path}...")
@@ -263,9 +300,38 @@ class BigDataPipeline:
         ds_hr = ds_hr.sel(time=common_times)
         ds_lr = ds_lr.sel(time=common_times)
 
+        # 6. Normalizar coordenadas HR a lat/lon 1D (si es posible)
+        hr_lat_dim = 'latitude' if 'latitude' in ds_hr.dims else 'y'
+        hr_lon_dim = 'longitude' if 'longitude' in ds_hr.dims else 'x'
+
+        if hr_lat_dim == 'y' and 'latitude' in ds_hr.coords and 'longitude' in ds_hr.coords:
+            lat = ds_hr['latitude']
+            lon = ds_hr['longitude']
+            if lat.ndim == 2 and lon.ndim == 2:
+                lat1d = lat[:, 0]
+                lon1d = lon[0, :]
+                try:
+                    is_rect_lat = np.allclose(lat.values, lat1d.values[:, None], atol=1e-6)
+                    is_rect_lon = np.allclose(lon.values, lon1d.values[None, :], atol=1e-6)
+                except Exception:
+                    is_rect_lat = is_rect_lon = False
+
+                if is_rect_lat and is_rect_lon:
+                    print("✅ HR: lat/lon 2D rectilíneo detectado. Convirtiendo a 1D.")
+                    ds_hr = ds_hr.rename({'latitude': 'latitude_2d', 'longitude': 'longitude_2d'})
+                    ds_hr = ds_hr.assign_coords(latitude=('y', lat1d.values),
+                                                longitude=('x', lon1d.values))
+                    ds_hr = ds_hr.swap_dims({'y': 'latitude', 'x': 'longitude'})
+                    hr_lat_dim = 'latitude'
+                    hr_lon_dim = 'longitude'
+                else:
+                    print("⚠️ HR lat/lon 2D no es rectilíneo. Se mantiene y/x.")
+            else:
+                print("ℹ️ HR ya contiene lat/lon 1D o no-2D; se mantiene.")
+
         # 6. Recorte y Tensores
-        hr_lat_coord = 'latitude' if 'latitude' in ds_hr.coords else 'y'
-        hr_lon_coord = 'longitude' if 'longitude' in ds_hr.coords else 'x'
+        hr_lat_coord = hr_lat_dim if hr_lat_dim in ds_hr.coords else 'y'
+        hr_lon_coord = hr_lon_dim if hr_lon_dim in ds_hr.coords else 'x'
         
         min_lat = ds_hr[hr_lat_coord].min().compute().item()
         max_lat = ds_hr[hr_lat_coord].max().compute().item()
@@ -308,10 +374,27 @@ class BigDataPipeline:
         # -----------------------------------------------
         
         # HR Clean
-        hr_lat_dim = 'latitude' if 'latitude' in ds_hr.dims else 'y'
-        hr_lon_dim = 'longitude' if 'longitude' in ds_hr.dims else 'x'
         ds_hr_clean = ds_hr["tas_C"].ffill(dim=hr_lon_dim).bfill(dim=hr_lon_dim) \
                                     .ffill(dim=hr_lat_dim).bfill(dim=hr_lat_dim)
+
+        # Rellenar NaNs restantes (LR y HR) si existen
+        try:
+            lr_has_nan = bool(ds_lr_clean.isnull().any().compute().item())
+        except Exception:
+            lr_has_nan = True
+        if lr_has_nan:
+            print("⚠️ LR aún contiene NaNs. Rellenando con media por variable...")
+            mean_lr_fill = ds_lr_clean.mean(dim=['time', 'latitude', 'longitude'], skipna=True)
+            ds_lr_clean = ds_lr_clean.fillna(mean_lr_fill)
+
+        try:
+            hr_has_nan = bool(ds_hr_clean.isnull().any().compute().item())
+        except Exception:
+            hr_has_nan = True
+        if hr_has_nan:
+            print("⚠️ HR aún contiene NaNs. Rellenando con media global...")
+            mean_hr_fill = ds_hr_clean.mean(skipna=True)
+            ds_hr_clean = ds_hr_clean.fillna(mean_hr_fill)
 
         # 7. Stats Vectoriales
         print("   🧮 Calculando estadísticas...")
@@ -363,7 +446,7 @@ class BigDataPipeline:
             
         print("✅ ETL Finalizado.")
         
-    def get_tf_datasets(self):
+    def get_tf_datasets(self, include_test: bool = False):
         """Generadores Multi-Canal (Corrige conflicto de nombres Lat/Lon vs Y/X)"""
 
         
@@ -393,6 +476,11 @@ class BigDataPipeline:
         hr_dims_list = list(da_hr.dims)
         hr_y = next((d for d in hr_dims_list if d in ['y', 'latitude', 'lat']), 'y')
         hr_x = next((d for d in hr_dims_list if d in ['x', 'longitude', 'lon']), 'x')
+        real_hr_h = da_hr.sizes[hr_y]
+        real_hr_w = da_hr.sizes[hr_x]
+        if self.cfg.HR_SHAPE != (real_hr_h, real_hr_w):
+            print(f"   ⚠️ CORRECCIÓN HR_SHAPE: {self.cfg.HR_SHAPE} -> ({real_hr_h}, {real_hr_w}).")
+            self.cfg.HR_SHAPE = (real_hr_h, real_hr_w)
 
         # --- 🛑 2. ACTUALIZACIÓN DE CONFIGURACIÓN 🛑 ---
         # Ahora actualizamos Config usando las dimensiones del LR, no las del HR
@@ -427,13 +515,18 @@ class BigDataPipeline:
             end_idx = int(np.searchsorted(times, end, side="left"))
             return start_idx, end_idx
 
+        test_start = test_end = None
         if getattr(self.cfg, "SPLIT_MODE", "fraction") == "time":
             try:
                 times = ds['time'].values
                 train_start, train_end = _time_indices(times, self.cfg.TRAIN_START, self.cfg.TRAIN_END)
                 val_start, val_end = _time_indices(times, self.cfg.VAL_START, self.cfg.VAL_END)
+                if include_test:
+                    test_start, test_end = _time_indices(times, self.cfg.TEST_START, self.cfg.TEST_END)
                 print(f"   📂 Dataset (train) range: {train_start} -> {train_end}")
                 print(f"   📂 Dataset (val) range: {val_start} -> {val_end}")
+                if include_test:
+                    print(f"   📂 Dataset (test) range: {test_start} -> {test_end}")
             except Exception as e:
                 print(f"⚠️ Time split fallback to fraction due to: {e}")
                 split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
@@ -442,7 +535,12 @@ class BigDataPipeline:
         else:
             split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
             train_start, train_end = 0, split_idx
-            val_start, val_end = split_idx, total_len
+            if include_test:
+                val_end = int(total_len * 0.9)
+                val_start = split_idx
+                test_start, test_end = val_end, total_len
+            else:
+                val_start, val_end = split_idx, total_len
         
         # Detectar canales LR
         if 'variable' in da_lr.sizes:
@@ -498,5 +596,11 @@ class BigDataPipeline:
         val_ds = tf.data.Dataset.from_generator(
             lambda: generator(val_start, val_end), output_signature=((spec_lr, spec_st), spec_hr)
         ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+
+        if include_test:
+            test_ds = tf.data.Dataset.from_generator(
+                lambda: generator(test_start, test_end), output_signature=((spec_lr, spec_st), spec_hr)
+            ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+            return train_ds, val_ds, test_ds
         
         return train_ds, val_ds

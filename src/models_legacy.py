@@ -366,12 +366,10 @@ class ModelZoo:
 
         # 2. Pre-Procesado (Early Upsampling de LR)
         # Escalamos la imagen pequeña (5x9) al tamaño grande (251x251) para concatenar
+        # Reescalar LR directamente al tamaño HR (robusto para cualquier tamaño)
         x_lr_up = layers.TimeDistributed(
-            layers.UpSampling2D(size=(hr_shape[0] // lr_shape[0], hr_shape[1] // lr_shape[1]), interpolation='bilinear')
+            layers.Resizing(hr_shape[0], hr_shape[1], interpolation='bilinear')
         )(lr_input)
-        
-        # Ajuste fino de tamaño si la división no fue exacta
-        x_lr_up = layers.TimeDistributed(layers.Resizing(hr_shape[0], hr_shape[1]))(x_lr_up)
 
         # 3. Concatenación (Early Fusion)
         x = layers.Concatenate(axis=-1)([x_lr_up, static_input])
