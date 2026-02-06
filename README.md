@@ -216,7 +216,7 @@ python -m scripts.print_active_config
 
 ```bash
 # Train with patches (useful for large grids)
-python scripts/train_tiles.py --model-type unet --epochs 50
+python scripts/train_tiles.py --model-type unet --epochs 50 --temporal-sampler weighted
 
 # Tile-based ablation
 python scripts/run_ablation_tiles.py --model-type mamba --epochs 30
@@ -523,3 +523,4 @@ Urban heat island mapping requires high‑resolution temperature fields, yet ava
 Preset files (copy into config as needed):
 - `config/presets/a10.py`
 - `config/presets/m4.py`
+TEMPORAL_SAMPLER = "weighted_station"  # optional if stations GRIB is available

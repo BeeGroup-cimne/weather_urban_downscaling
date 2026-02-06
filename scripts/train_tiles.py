@@ -35,7 +35,7 @@ def main():
     parser.add_argument("--val-patches", type=int, default=200)
     parser.add_argument("--sampler", default="static_weighted", choices=["static_weighted", "uniform"])
     parser.add_argument("--temporal-stride", type=int, default=1)
-    parser.add_argument("--temporal-sampler", default="uniform", choices=["uniform", "weighted"])
+    parser.add_argument("--temporal-sampler", default="uniform", choices=["uniform", "weighted", "weighted_station"])
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     args = parser.parse_args()

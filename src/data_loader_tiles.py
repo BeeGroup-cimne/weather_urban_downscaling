@@ -92,20 +92,55 @@ class TileDataPipeline:
 
     def _build_time_weights(self, da_hr, time_dim):
         sampler = getattr(self.cfg, "TEMPORAL_SAMPLER", "uniform")
-        if sampler != "weighted":
+        if sampler not in ("weighted", "weighted_station"):
             self.time_cdf = None
             return None
-        try:
-            # Use mean absolute temporal gradient as importance
-            hr_mean = da_hr.mean(dim=[d for d in da_hr.dims if d != time_dim])
-            grad = hr_mean.diff(time_dim).abs()
-            # pad to match length
-            grad = grad.pad({time_dim: (1, 0)}, mode="constant", constant_values=0.0)
-            w = grad.values.astype(np.float32)
-        except Exception:
-            print("⚠️ No se pudo construir pesos temporales, fallback uniform.")
+
+        series = None
+
+        if sampler == "weighted_station":
+            station_path = getattr(self.cfg, "STATION_GRIB_PATH", "")
+            if station_path and os.path.exists(station_path):
+                try:
+                    cfgrib_kwargs = {
+                        "filter_by_keys": {"typeOfLevel": "surface"},
+                        "errors": "ignore",
+                        "indexpath": "",
+                    }
+                    ds_st = xr.open_dataset(station_path, engine="cfgrib", backend_kwargs=cfgrib_kwargs)
+                    for v in ["t2m", "2t", "tas", "airTemperature"]:
+                        if v in ds_st:
+                            var = v
+                            break
+                    else:
+                        var = list(ds_st.data_vars)[0]
+                    da = ds_st[var]
+                    if float(da.isel({da.dims[0]: slice(0, min(3, da.sizes[da.dims[0]]))}).mean().values) > 200:
+                        da = da - 273.15
+                    time_d = next((d for d in da.dims if d in ["time", "valid_time"]), da.dims[0])
+                    reduce_dims = [d for d in da.dims if d != time_d]
+                    series = da.mean(dim=reduce_dims).values
+                except Exception:
+                    series = None
+
+        if series is None:
+            try:
+                hr_mean = da_hr.mean(dim=[d for d in da_hr.dims if d != time_dim]).compute()
+                series = hr_mean.values
+            except Exception:
+                print("⚠️ No se pudo construir pesos temporales, fallback uniform.")
+                self.time_cdf = None
+                return None
+
+        series = np.asarray(series, dtype=np.float32)
+        if series.size == 0 or not np.isfinite(series).any():
+            print("⚠️ Serie temporal inválida para pesos, fallback uniform.")
             self.time_cdf = None
             return None
+
+        grad = np.abs(np.diff(series, prepend=series[0]))
+        grad = np.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+        w = grad
 
         w = w - np.nanmin(w)
         gamma = float(getattr(self.cfg, "TEMPORAL_WEIGHT_GAMMA", 1.0))
