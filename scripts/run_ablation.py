@@ -1,3 +1,4 @@
+import argparse
 import gc
 import os
 import sys
@@ -24,16 +25,26 @@ from src.losses import tf_hybrid_loss
 
 # --- CONFIGURACIÓN DE EXPERIMENTOS ---
 # Mapeo de nombres a métodos de construcción en ModelZoo
-EXPERIMENTS_TO_RUN = {
-    #'unet': ModelZoo.build_unet,
-    #'lstm': ModelZoo.build_hybrid_unet_lstm,
-    'mamba': ModelZoo.build_hybrid_unet_mamba
-}
+EXPERIMENTS_TO_RUN = [
+    ("unet", ModelZoo.build_unet),
+    ("lstm", ModelZoo.build_hybrid_unet_lstm),
+    ("mamba", ModelZoo.build_hybrid_unet_mamba),
+]
 
 # --- 🧠 FÍSICA: FUNCIÓN DE PÉRDIDA HÍBRIDA (TAO LOSS) ---
 combined_loss = tf_hybrid_loss(alpha=0.8, max_val=5.0)
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        choices=["unet", "lstm", "mamba"],
+        help="Run only the selected models in order (default: unet lstm mamba).",
+    )
+    args = parser.parse_args()
+
     print(f"\n🚀 INICIANDO ESTUDIO DE ABLACIÓN (Alineado con train.py)")
     print(f"   ⚡ Hardware: {Config.DEVICE}")
     
@@ -74,7 +85,10 @@ def main():
     # =========================================================================
 
     # 2. BUCLE DE EXPERIMENTOS
-    for strategy_name, builder_func in EXPERIMENTS_TO_RUN.items():
+    selected = args.models or [name for name, _ in EXPERIMENTS_TO_RUN]
+    experiment_list = [(name, fn) for name, fn in EXPERIMENTS_TO_RUN if name in selected]
+
+    for strategy_name, builder_func in experiment_list:
         clear_session()
         gc.collect()
         
