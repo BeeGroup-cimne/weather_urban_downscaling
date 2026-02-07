@@ -132,11 +132,7 @@ def main():
     x_st = np.broadcast_to(st_patch[np.newaxis, ...], (seq_len, *st_patch.shape))
 
     # Dataset (single sample, repeated)
-    x_lr_b = x_lr[np.newaxis, ...]
-    x_st_b = x_st[np.newaxis, ...]
-    y_b = y_hr[np.newaxis, ...]
-
-    ds_train = tf.data.Dataset.from_tensors(((x_lr_b, x_st_b), y_b)).repeat().batch(1)
+    ds_train = tf.data.Dataset.from_tensors(((x_lr, x_st), y_hr)).repeat().batch(1)
 
     model = build_model(args.model_type)
     if args.loss == "mse":
