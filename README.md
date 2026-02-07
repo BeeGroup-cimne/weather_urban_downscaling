@@ -206,6 +206,12 @@ python -m scripts.repair_zarr_nans
 python -m scripts.overfit_sanity --model-type mamba --epochs 20 --train-batches 4 --val-batches 2
 ```
 
+### 4.2 Fixed-Tile Overfit (Alignment Sanity)
+
+```bash
+python scripts/overfit_fixed_tile.py --model-type mamba --epochs 30 --steps 50
+```
+
 ### 4.1 Active Config Snapshot
 
 ```bash
@@ -226,6 +232,19 @@ python scripts/run_ablation_tiles.py --model-type mamba --epochs 30
 
 ```bash
 python scripts/run_inference.py --model-type unet --model-path experiments/models/UNet_best.h5
+```
+
+### 6.1 Full-Frame Reconstruction From Tiles
+
+```bash
+python scripts/run_inference_tiles_fullframe.py \
+  --model-type mamba \
+  --model-path experiments/models/Tiles_MAMBA_best.h5 \
+  --patch-size 96 \
+  --stride 48 \
+  --batch-size 8 \
+  --use-last \
+  --experiment-name "TilesFullFrame_MAMBA_v1"
 ```
 
 ### 7. PyTorch (Experimental)
