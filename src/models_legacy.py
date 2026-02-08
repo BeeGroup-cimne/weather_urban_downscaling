@@ -203,29 +203,30 @@ class ModelZoo:
         x = Concatenate()([x_up, inp_st])
 
         # Encoder
-        c1 = cls.conv_block(x, 32)
+        base = getattr(Config, "UNET_BASE_FILTERS", 32)
+        c1 = cls.conv_block(x, base)
         p1 = TimeDistributed(MaxPooling2D((2, 2)))(c1)
-        c2 = cls.conv_block(p1, 64)
+        c2 = cls.conv_block(p1, base * 2)
         p2 = TimeDistributed(MaxPooling2D((2, 2)))(c2)
-        c3 = cls.conv_block(p2, 128)
+        c3 = cls.conv_block(p2, base * 4)
         p3 = TimeDistributed(MaxPooling2D((2, 2)))(c3)
 
         # Bottleneck
-        b = cls.conv_block(p3, 256)
+        b = cls.conv_block(p3, base * 8)
         b = TimeDistributed(Dropout(0.3))(b)
 
         # Decoder
         u3 = TimeDistributed(Resizing(c3.shape[2], c3.shape[3]))(b)
         u3 = Concatenate()([u3, c3])
-        c4 = cls.conv_block(u3, 128)
+        c4 = cls.conv_block(u3, base * 4)
 
         u2 = TimeDistributed(Resizing(c2.shape[2], c2.shape[3]))(c4)
         u2 = Concatenate()([u2, c2])
-        c5 = cls.conv_block(u2, 64)
+        c5 = cls.conv_block(u2, base * 2)
 
         u1 = TimeDistributed(Resizing(c1.shape[2], c1.shape[3]))(c5)
         u1 = Concatenate()([u1, c1])
-        c6 = cls.conv_block(u1, 32)
+        c6 = cls.conv_block(u1, base)
 
         out = TimeDistributed(Conv2D(1, (1, 1), activation='linear'))(c6)
 

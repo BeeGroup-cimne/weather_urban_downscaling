@@ -130,6 +130,7 @@ class GPUServerConfig:
     LR_SHAPE = (4, 3)
     CHANNELS = 9
     STATIC_CHANNELS = 13
+    UNET_BASE_FILTERS = 32
     
     # Dimensiones de modelo adaptativas
     UNET_FILTERS = 64  # Reducido de 128

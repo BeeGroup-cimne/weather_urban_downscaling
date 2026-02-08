@@ -80,6 +80,8 @@ class Config:
     LR_SHAPE = (4, 3) 
     CHANNELS = 9
     STATIC_CHANNELS = 13
+    UNET_BASE_FILTERS = 32
+    UNET_BASE_FILTERS = 32
 
     # ---------------------------------------------------------
     # 5. TILE-BASED TRAINING (Optional)
