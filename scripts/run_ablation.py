@@ -82,6 +82,9 @@ def main():
     if getattr(Config, "MAX_STEPS_PER_EPOCH", None):
         train_ds = train_ds.take(Config.MAX_STEPS_PER_EPOCH)
         val_ds = val_ds.take(max(1, Config.MAX_STEPS_PER_EPOCH // 2))
+        # Evitar que el dataset se agote entre épocas en modo rápido
+        train_ds = train_ds.repeat()
+        val_ds = val_ds.repeat()
     # =========================================================================
 
     # 2. BUCLE DE EXPERIMENTOS
