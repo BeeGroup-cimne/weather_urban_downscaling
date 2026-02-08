@@ -282,6 +282,14 @@ Notes:
 
 ---
 
+## 🧱 Model Capacity Knobs
+
+These options live in `config/config.py` and `config/gpu_server_config.py`:
+
+```python
+UNET_BASE_FILTERS = 32  # base width for UNet (32/64/128/256). Try 48 or 64 for higher capacity.
+```
+
 ## 🧩 Tile Training Options (Optional)
 
 ```python
