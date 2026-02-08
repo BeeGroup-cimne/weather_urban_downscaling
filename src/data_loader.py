@@ -34,12 +34,6 @@ class BigDataPipeline:
         # Definimos ruta del caché estático
         static_cache_path = self.cfg.STATIC_CACHE_PATH
 
-        print("🗺️ Procesando e Interpolando datos estáticos (Esto se hará solo una vez)...")
-        
-        # 1. Abrimos el dataset HR para leer dimensiones y grilla
-        # Usamos open_dataset normal para asegurar acceso a todas las variables
-        ds_hr = xr.open_dataset(self.cfg.PATH_HR)
-
         # Si ya existe cache Zarr, preferimos su grilla HR (es la que usa el entrenamiento)
         cache_hr = None
         if os.path.exists(self.cache_dir):
@@ -49,7 +43,43 @@ class BigDataPipeline:
                     cache_hr = z["hr_target"]
             except Exception:
                 cache_hr = None
+
+        # --- FIX: DETECCIÓN ROBUSTA DE DIMENSIONES ---
+        # Intentar obtener dimensiones desde el cache primero (sin abrir PATH_HR)
+        dim_y = dim_x = None
+        if cache_hr is not None and 'latitude' in cache_hr.coords and 'longitude' in cache_hr.coords:
+            lat_c = cache_hr['latitude'].values
+            lon_c = cache_hr['longitude'].values
+            if getattr(lat_c, 'ndim', 1) == 1 and getattr(lon_c, 'ndim', 1) == 1:
+                dim_y, dim_x = lat_c.shape[0], lon_c.shape[0]
+            else:
+                dim_y, dim_x = lat_c.shape
+        elif cache_hr is not None and 'y' in cache_hr.sizes and 'x' in cache_hr.sizes:
+            dim_y = cache_hr.sizes['y']
+            dim_x = cache_hr.sizes['x']
+
+        # Si el cache estático ya coincide, salir temprano sin abrir PATH_HR
+        if dim_y is not None and dim_x is not None and os.path.exists(static_cache_path):
+            print("🗺️ Cargando datos estáticos desde caché (.npy)...")
+            cached = np.load(static_cache_path)
+            if cached.shape[0] == dim_y and cached.shape[1] == dim_x:
+                self.ds_static_single = cached
+                print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
+                return
+            print(f"   ⚠️ Cache estático desalineado {cached.shape[:2]} != ({dim_y}, {dim_x}). Recalculando...")
+
+        print("🗺️ Procesando e Interpolando datos estáticos (Esto se hará solo una vez)...")
         
+        # 1. Abrimos el dataset HR para leer dimensiones y grilla
+        # Usamos open_dataset normal para asegurar acceso a todas las variables
+        ds_hr = None
+        try:
+            ds_hr = xr.open_dataset(self.cfg.PATH_HR)
+        except Exception as e:
+            if cache_hr is None:
+                raise
+            print(f"⚠️ No se pudo abrir PATH_HR ({self.cfg.PATH_HR}). Usando grilla del cache. Error: {e}")
+
         # --- FIX: DETECCIÓN ROBUSTA DE DIMENSIONES ---
         # Preferir tamaño real del grid lat/lon (si existe y es 2D)
         if cache_hr is not None and 'latitude' in cache_hr.coords and 'longitude' in cache_hr.coords:
@@ -59,16 +89,18 @@ class BigDataPipeline:
                 dim_y, dim_x = lat_c.shape[0], lon_c.shape[0]
             else:
                 dim_y, dim_x = lat_c.shape
-        elif 'latitude' in ds_hr.coords and hasattr(ds_hr['latitude'], 'ndim') and ds_hr['latitude'].ndim == 2:
+        elif ds_hr is not None and 'latitude' in ds_hr.coords and hasattr(ds_hr['latitude'], 'ndim') and ds_hr['latitude'].ndim == 2:
             dim_y, dim_x = ds_hr['latitude'].shape
-        elif 'y' in ds_hr.sizes and 'x' in ds_hr.sizes:
+        elif ds_hr is not None and 'y' in ds_hr.sizes and 'x' in ds_hr.sizes:
             dim_y = ds_hr.sizes['y']
             dim_x = ds_hr.sizes['x']
-        elif 'latitude' in ds_hr.sizes:
+        elif ds_hr is not None and 'latitude' in ds_hr.sizes:
             dim_y = ds_hr.sizes['latitude']
             dim_x = ds_hr.sizes['longitude']
         else:
             # Fallback por si acaso
+            if ds_hr is None:
+                raise RuntimeError("❌ No se pudo determinar la grilla HR (cache y PATH_HR no disponibles).")
             dim_y, dim_x = ds_hr.shape[-2], ds_hr.shape[-1]
             
         print(f" 📏 Dimensiones detectadas HR: {dim_y}x{dim_x}")
@@ -89,6 +121,8 @@ class BigDataPipeline:
             grid_y = cache_hr['latitude'].values
             grid_x = cache_hr['longitude'].values
         else:
+            if ds_hr is None:
+                raise RuntimeError("❌ No se pudo leer latitude/longitude para interpolación.")
             grid_y = ds_hr['latitude'].values
             grid_x = ds_hr['longitude'].values
         
