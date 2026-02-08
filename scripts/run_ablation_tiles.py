@@ -62,6 +62,8 @@ def main():
     # Repeat to avoid dataset exhaustion across epochs
     train_ds = train_ds.repeat()
     val_ds = val_ds.repeat()
+    steps_per_epoch = max(1, Config.PATCHES_PER_EPOCH // max(1, Config.BATCH_SIZE))
+    validation_steps = max(1, Config.VAL_PATCHES_PER_EPOCH // max(1, Config.BATCH_SIZE))
 
     all_histories = {}
 
@@ -83,7 +85,14 @@ def main():
         opt = ModelZoo.get_optimizer(Config.LEARNING_RATE)
         model.compile(optimizer=opt, loss=loss_fn, metrics=["mae", "mse"])
 
-        history = run_experiment(model, train_ds, val_ds, exp_name)
+        history = run_experiment(
+            model,
+            train_ds,
+            val_ds,
+            exp_name,
+            steps_per_epoch=steps_per_epoch,
+            validation_steps=validation_steps,
+        )
         all_histories[name] = history
 
     plot_comparative_history(all_histories, save_dir=os.path.join(Config.EXPERIMENTS_DIR, "figures"))

@@ -58,7 +58,7 @@ def plot_comparative_history(histories, save_dir):
 
 # 4. ENTRENAMIENTO Y VISUALIZACIÓN
 
-def run_experiment(model, train_ds, val_ds, experiment_name):
+def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=None, validation_steps=None):
     """Ejecuta el ciclo de entrenamiento estandarizado"""
     print(f"\n🧪 Iniciando {experiment_name}...")
 
@@ -113,9 +113,14 @@ def run_experiment(model, train_ds, val_ds, experiment_name):
         "verbose": 1
     }
     
-    if getattr(Config, "MAX_STEPS_PER_EPOCH", None):
-        fit_kwargs["steps_per_epoch"] = Config.MAX_STEPS_PER_EPOCH
-        fit_kwargs["validation_steps"] = max(1, Config.MAX_STEPS_PER_EPOCH // 2)
+    if steps_per_epoch is None and getattr(Config, "MAX_STEPS_PER_EPOCH", None):
+        steps_per_epoch = Config.MAX_STEPS_PER_EPOCH
+        validation_steps = max(1, Config.MAX_STEPS_PER_EPOCH // 2)
+
+    if steps_per_epoch is not None:
+        fit_kwargs["steps_per_epoch"] = steps_per_epoch
+    if validation_steps is not None:
+        fit_kwargs["validation_steps"] = validation_steps
     
     history = model.fit(
         train_ds,

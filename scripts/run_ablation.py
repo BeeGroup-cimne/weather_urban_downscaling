@@ -78,13 +78,22 @@ def main():
         print(f"❌ Error cargando datos: {e}")
         sys.exit(1)
     
-    # Smoke test: limitar pasos si está configurado
+    # Steps y repeat para evitar agotamiento del dataset
+    steps_per_epoch = None
+    validation_steps = None
     if getattr(Config, "MAX_STEPS_PER_EPOCH", None):
         train_ds = train_ds.take(Config.MAX_STEPS_PER_EPOCH)
         val_ds = val_ds.take(max(1, Config.MAX_STEPS_PER_EPOCH // 2))
-        # Evitar que el dataset se agote entre épocas en modo rápido
+        steps_per_epoch = Config.MAX_STEPS_PER_EPOCH
+        validation_steps = max(1, Config.MAX_STEPS_PER_EPOCH // 2)
         train_ds = train_ds.repeat()
         val_ds = val_ds.repeat()
+    else:
+        steps_per_epoch = getattr(pipeline, "train_steps", None)
+        validation_steps = getattr(pipeline, "val_steps", None)
+        if steps_per_epoch is not None and validation_steps is not None:
+            train_ds = train_ds.repeat()
+            val_ds = val_ds.repeat()
     # =========================================================================
 
     # 2. BUCLE DE EXPERIMENTOS
@@ -150,7 +159,9 @@ def main():
             model=model,
             train_ds=train_ds,
             val_ds=val_ds,
-            experiment_name=experiment_name
+            experiment_name=experiment_name,
+            steps_per_epoch=steps_per_epoch,
+            validation_steps=validation_steps,
         )
         
         all_histories[strategy_name] = history

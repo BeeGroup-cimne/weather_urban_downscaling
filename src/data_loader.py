@@ -682,6 +682,18 @@ class BigDataPipeline:
         max_start_train = train_end - seq_len * stride
         max_start_val = val_end - seq_len * stride
         max_start_test = test_end - seq_len * stride if include_test else None
+        # Estimated samples and steps (for stable training with repeat)
+        train_samples = max(0, max_start_train - train_start)
+        val_samples = max(0, max_start_val - val_start)
+        if train_samples == 0:
+            train_samples = 1
+        if val_samples == 0:
+            val_samples = 1
+        self.train_steps = max(1, train_samples // max(1, self.cfg.BATCH_SIZE))
+        self.val_steps = max(1, val_samples // max(1, self.cfg.BATCH_SIZE))
+        if include_test and max_start_test is not None and test_start is not None:
+            test_samples = max(1, max_start_test - test_start)
+            self.test_steps = max(1, test_samples // max(1, self.cfg.BATCH_SIZE))
 
         def _season_index(times_idx):
             # DJF=0, MAM=1, JJA=2, SON=3
