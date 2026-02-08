@@ -6,6 +6,7 @@ Copiar estos valores a config/config.py según necesidad.
 PRESET = {
     "BATCH_SIZE": 2,
     "SEQ_LEN": 6,
+    "MAX_STEPS_PER_EPOCH": 200,
     "TEMPORAL_STRIDE": 2,
     "TEMPORAL_SAMPLER": "weighted",
     "TEMPORAL_WEIGHT_GAMMA": 1.0,

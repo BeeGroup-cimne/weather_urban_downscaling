@@ -749,9 +749,10 @@ class BigDataPipeline:
         spec_st = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, self.cfg.STATIC_CHANNELS), dtype=tf.float32)
         spec_hr = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, 1), dtype=tf.float32)
 
+        shuffle_buf = getattr(self.cfg, "SHUFFLE_BUFFER_SIZE", 500)
         train_ds = tf.data.Dataset.from_generator(
             lambda: generator(train_start, train_end, max_start_train), output_signature=((spec_lr, spec_st), spec_hr)
-        ).shuffle(500).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+        ).shuffle(shuffle_buf).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
         
         val_ds = tf.data.Dataset.from_generator(
             lambda: generator(val_start, val_end, max_start_val), output_signature=((spec_lr, spec_st), spec_hr)

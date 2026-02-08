@@ -68,6 +68,9 @@ class Config:
     LEARNING_RATE = 1e-4
     SEQ_LEN = 6 
     SPLIT_FRACTION = 0.8 
+    # Limitar pasos por época para runs locales rápidos (None = usar todo)
+    MAX_STEPS_PER_EPOCH = 200
+    SHUFFLE_BUFFER_SIZE = 200
 
     # ---------------------------------------------------------
     # 4. DIMENSIONES
