@@ -205,13 +205,14 @@ def visualize_results(model, val_ds, title):
         plt.subplot(1, 3, 1)
         # x_lr shape: (Batch, Time, Lat, Lon, Chan)
         lr_raw = x_lr[idx, t, :, :, 0]
-        lr_up = tf.image.resize(lr_raw[..., None], Config.HR_SHAPE, method="bilinear").numpy()[..., 0]
+        # Upsample LR for display using nearest-neighbor to keep pixelated look
+        lr_up = tf.image.resize(lr_raw[..., None], Config.HR_SHAPE, method="nearest").numpy()[..., 0]
         hr_ref = y_true_real[idx, t, :, :, 0]
         if hasattr(hr_ref, "numpy"):
             hr_ref = hr_ref.numpy()
         lr_disp, lr_tag = _align_lr_for_plot(lr_up, hr_ref)
         print(f"   ℹ️ LR display alignment: {lr_tag}")
-        plt.imshow(_rotate(lr_disp), cmap='viridis', origin='lower') 
+        plt.imshow(_rotate(lr_disp), cmap='viridis', origin='lower', interpolation='nearest') 
         plt.title("Input Low Res (LR)")
         plt.axis('off')
 
