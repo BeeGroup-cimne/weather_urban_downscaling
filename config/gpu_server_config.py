@@ -131,6 +131,11 @@ class GPUServerConfig:
     CHANNELS = 9
     STATIC_CHANNELS = 13
     UNET_BASE_FILTERS = 32
+
+    # Regularización / generalización
+    L2_WEIGHT_DECAY = 1e-4
+    GAUSSIAN_NOISE_STD = 0.01
+    STATS_TRAIN_ONLY = True
     
     # Dimensiones de modelo adaptativas
     UNET_FILTERS = 64  # Reducido de 128
@@ -151,8 +156,8 @@ class GPUServerConfig:
     # Configuración de datos optimizada
     ZARR_CHUNK_SIZE = 50  # Chunks más pequeños
     STATIC_BROADCASTING = True  # Evitar np.repeat
-    PREFETCH_BUFFER_SIZE = 2  # Buffer pequeño para evitar acumulación
-    SHUFFLE_BUFFER_SIZE = 100  # Shuffle buffer reducido
+    PREFETCH_BUFFER_SIZE = 1  # Buffer mínimo para evitar acumulación
+    SHUFFLE_BUFFER_SIZE = 50  # Shuffle buffer reducido
     
      # Memory monitoring
     MEMORY_MONITORING = True

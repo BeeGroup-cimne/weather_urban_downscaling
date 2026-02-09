@@ -432,12 +432,25 @@ class BigDataPipeline:
 
         # 7. Stats Vectoriales
         print("   🧮 Calculando estadísticas...")
+        ds_lr_stats = ds_lr_clean
+        ds_hr_stats = ds_hr_clean
+        if getattr(self.cfg, "STATS_TRAIN_ONLY", False) and getattr(self.cfg, "SPLIT_MODE", "") == "time":
+            try:
+                start = pd.to_datetime(self.cfg.TRAIN_START)
+                end = pd.to_datetime(self.cfg.TRAIN_END)
+                if "time" in ds_lr_stats.dims:
+                    ds_lr_stats = ds_lr_stats.sel(time=slice(start, end))
+                if "time" in ds_hr_stats.dims:
+                    ds_hr_stats = ds_hr_stats.sel(time=slice(start, end))
+                print(f"   🧪 Stats TRAIN-only: {self.cfg.TRAIN_START} -> {self.cfg.TRAIN_END}")
+            except Exception as e:
+                print(f"   ⚠️ No se pudo filtrar stats por TRAIN: {e}")
         with ProgressBar():
             # Especificamos dims explícitas para asegurar promedio correcto
-            mean_lr = ds_lr_clean.mean(dim=['time', 'latitude', 'longitude']).compute()
-            std_lr = ds_lr_clean.std(dim=['time', 'latitude', 'longitude']).compute()
-            mean_hr = ds_hr_clean.mean().compute().item()
-            std_hr = ds_hr_clean.std().compute().item()
+            mean_lr = ds_lr_stats.mean(dim=['time', 'latitude', 'longitude']).compute()
+            std_lr = ds_lr_stats.std(dim=['time', 'latitude', 'longitude']).compute()
+            mean_hr = ds_hr_stats.mean().compute().item()
+            std_hr = ds_hr_stats.std().compute().item()
         
         # Guardar estadísticas para visualizaciones
         try:
@@ -795,19 +808,20 @@ class BigDataPipeline:
         spec_st = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, self.cfg.STATIC_CHANNELS), dtype=tf.float32)
         spec_hr = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, 1), dtype=tf.float32)
 
-        shuffle_buf = getattr(self.cfg, "SHUFFLE_BUFFER_SIZE", 500)
+        shuffle_buf = getattr(self.cfg, "SHUFFLE_BUFFER_SIZE", 100)
+        prefetch_buf = getattr(self.cfg, "PREFETCH_BUFFER_SIZE", 2)
         train_ds = tf.data.Dataset.from_generator(
             lambda: generator(train_start, train_end, max_start_train), output_signature=((spec_lr, spec_st), spec_hr)
-        ).shuffle(shuffle_buf).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+        ).shuffle(shuffle_buf).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
         
         val_ds = tf.data.Dataset.from_generator(
             lambda: generator(val_start, val_end, max_start_val), output_signature=((spec_lr, spec_st), spec_hr)
-        ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+        ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
 
         if include_test:
             test_ds = tf.data.Dataset.from_generator(
                 lambda: generator(test_start, test_end, max_start_test), output_signature=((spec_lr, spec_st), spec_hr)
-            ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+            ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
             return train_ds, val_ds, test_ds
         
         return train_ds, val_ds

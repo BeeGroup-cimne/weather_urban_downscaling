@@ -290,6 +290,14 @@ These options live in `config/config.py` and `config/gpu_server_config.py`:
 UNET_BASE_FILTERS = 32  # base width for UNet (32/64/128/256). Try 48 or 64 for higher capacity.
 ```
 
+## 🧪 Regularization & Stats Knobs
+
+```python
+L2_WEIGHT_DECAY = 1e-4   # L2 on Conv kernels (0 disables)
+GAUSSIAN_NOISE_STD = 0.01  # noise on LR input during training (0 disables)
+STATS_TRAIN_ONLY = True  # compute normalization stats using TRAIN split only
+```
+
 ## 🧩 Tile Training Options (Optional)
 
 ```python

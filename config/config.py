@@ -70,7 +70,8 @@ class Config:
     SPLIT_FRACTION = 0.8 
     # Limitar pasos por época para runs locales rápidos (None = usar todo)
     MAX_STEPS_PER_EPOCH = 200
-    SHUFFLE_BUFFER_SIZE = 200
+    SHUFFLE_BUFFER_SIZE = 50
+    PREFETCH_BUFFER_SIZE = 1
 
     # ---------------------------------------------------------
     # 4. DIMENSIONES
@@ -81,7 +82,11 @@ class Config:
     CHANNELS = 9
     STATIC_CHANNELS = 13
     UNET_BASE_FILTERS = 32
-    UNET_BASE_FILTERS = 32
+
+    # Regularización / generalización
+    L2_WEIGHT_DECAY = 1e-4
+    GAUSSIAN_NOISE_STD = 0.01
+    STATS_TRAIN_ONLY = True
 
     # ---------------------------------------------------------
     # 5. TILE-BASED TRAINING (Optional)
