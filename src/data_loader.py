@@ -318,7 +318,7 @@ class BigDataPipeline:
             times_hr_pd = pd.to_datetime(times_hr_raw)
         
         # Reducir a precisión horaria (elimina microsegundos, ns)
-        times_hr_normalized = times_hr_pd.floor('H')
+        times_hr_normalized = times_hr_pd.floor('h')
         
         # Normalizar LR
         times_lr_raw = ds_lr.time.values
@@ -327,7 +327,7 @@ class BigDataPipeline:
         else:
             times_lr_pd = pd.to_datetime(times_lr_raw)
         
-        times_lr_normalized = times_lr_pd.floor('H')
+        times_lr_normalized = times_lr_pd.floor('h')
         
         print(f"   ✅ Tiempos normalizados (Precisión horaria)")
         print(f"      HR: {times_hr_normalized.min()} -> {times_hr_normalized.max()}")
