@@ -532,7 +532,19 @@ class BigDataPipeline:
         
         if os.path.exists(self.cache_dir): shutil.rmtree(self.cache_dir)
         
-        encoding = {k: {'compressor': zarr.Blosc(cname='zstd', clevel=3)} for k in ds_final.data_vars}
+        try:
+            import zarr as _zarr
+            from packaging import version as _version
+            if _version.parse(_zarr.__version__).major >= 3:
+                print("⚠️ Zarr v3 detectado: guardando sin compresión")
+                encoding = {}
+            else:
+                from numcodecs import Blosc
+                compressor = Blosc(cname='zstd', clevel=3)
+                encoding = {k: {'compressor': compressor} for k in ds_final.data_vars}
+        except Exception as e:
+            print(f"⚠️ No compressor available: {e}. Saving without compression.")
+            encoding = {}
         print("💾 Guardando Zarr...")
         with ProgressBar():
             ds_final.chunk({'time': 100}).to_zarr(self.cache_dir, mode='w', encoding=encoding, consolidated=True)
