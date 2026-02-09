@@ -201,6 +201,26 @@ def visualize_results(model, val_ds, title):
         plt.suptitle(f"{title} - Sample {idx} Frame {t}")
 
         # 1. Input LR (align for display)
+        def _apply_transform(arr, name):
+            if name == "as_is":
+                return arr
+            if name == "rot90":
+                return np.rot90(arr, 1)
+            if name == "rot180":
+                return np.rot90(arr, 2)
+            if name == "rot270":
+                return np.rot90(arr, 3)
+            if name == "flipud":
+                return np.flipud(arr)
+            if name == "fliplr":
+                return np.fliplr(arr)
+            if name == "transpose":
+                return arr.T
+            if name == "transpose_flipud":
+                return np.flipud(arr.T)
+            if name == "transpose_fliplr":
+                return np.fliplr(arr.T)
+            return arr
         def _rotate(arr):
             deg = int(os.getenv("PLOT_ROTATE", "0")) % 360
             if deg == 0:
@@ -210,14 +230,21 @@ def visualize_results(model, val_ds, title):
         plt.subplot(1, 3, 1)
         # x_lr shape: (Batch, Time, Lat, Lon, Chan)
         lr_raw = x_lr[idx, t, :, :, 0]
-        # Upsample LR for display using nearest-neighbor to keep pixelated look
+        if hasattr(lr_raw, "numpy"):
+            lr_raw = lr_raw.numpy()
+        # Upsample LR only for alignment (optional for display)
         lr_up = tf.image.resize(lr_raw[..., None], Config.HR_SHAPE, method="nearest").numpy()[..., 0]
         hr_ref = y_true_real[idx, t, :, :, 0]
         if hasattr(hr_ref, "numpy"):
             hr_ref = hr_ref.numpy()
         lr_disp, lr_tag = _align_lr_for_plot(lr_up, hr_ref)
         print(f"   ℹ️ LR display alignment: {lr_tag}")
-        plt.imshow(_rotate(lr_disp), cmap='viridis', origin='lower', interpolation='nearest') 
+        plot_lr_native = os.getenv("PLOT_LR_NATIVE", "1") == "1"
+        if plot_lr_native:
+            lr_native = _apply_transform(lr_raw, lr_tag)
+            plt.imshow(_rotate(lr_native), cmap='viridis', origin='lower', interpolation='nearest')
+        else:
+            plt.imshow(_rotate(lr_disp), cmap='viridis', origin='lower', interpolation='nearest') 
         plt.title("Input Low Res (LR)")
         plt.axis('off')
 

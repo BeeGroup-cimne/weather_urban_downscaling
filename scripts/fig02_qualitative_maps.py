@@ -37,6 +37,8 @@ def main():
                         help="Static variable name to visualize (substring match).")
     parser.add_argument("--static-channel", type=int, default=-1,
                         help="Static channel index (overrides --static-var if >=0).")
+    parser.add_argument("--lr-native", action="store_true",
+                        help="Show LR at native resolution (no upsample for display).")
     parser.add_argument("--rotate", type=int, default=0,
                         help="Rotate all panels by degrees (0, 90, 180, 270, -90, -180, -270).")
     parser.add_argument("--out", default="")
@@ -115,11 +117,13 @@ def main():
         hr_last = hr_last.numpy()
     pred_last = None if args.skip_model else y_pred[0, -1, ..., 0]
 
-    # Upsample LR for visualization
+    # Upsample LR for alignment/visualization
     lr_ch = args.lr_channel
     if lr_last.ndim == 3:
         lr_last = lr_last[..., lr_ch]
-    lr_up = tf.image.resize(lr_last[..., None], Config.HR_SHAPE, method="bilinear").numpy()[..., 0]
+    if hasattr(lr_last, "numpy"):
+        lr_last = lr_last.numpy()
+    lr_up = tf.image.resize(lr_last[..., None], Config.HR_SHAPE, method="nearest").numpy()[..., 0]
     st_vis = st_last[..., st_chan]  # selected static channel
     # Baseline prediction if model is skipped
     if args.skip_model:
@@ -157,6 +161,27 @@ def main():
     lr_disp, lr_tag = _align_lr_for_plot(lr_up, hr_last)
     print(f"ℹ️ LR display alignment: {lr_tag}")
 
+    def _apply_transform(arr, name):
+        if name == "as_is":
+            return arr
+        if name == "rot90":
+            return np.rot90(arr, 1)
+        if name == "rot180":
+            return np.rot90(arr, 2)
+        if name == "rot270":
+            return np.rot90(arr, 3)
+        if name == "flipud":
+            return np.flipud(arr)
+        if name == "fliplr":
+            return np.fliplr(arr)
+        if name == "transpose":
+            return arr.T
+        if name == "transpose_flipud":
+            return np.flipud(arr.T)
+        if name == "transpose_fliplr":
+            return np.fliplr(arr.T)
+        return arr
+
     def _stretch(data):
         p2, p98 = np.nanpercentile(data, [2, 98])
         if p2 == p98:
@@ -172,8 +197,9 @@ def main():
 
     fig, axes = plt.subplots(1, 5, figsize=(14, 3))
     pred_title = "Prediction" if not args.skip_model else "Baseline (LR upsample)"
+    lr_show = _apply_transform(lr_last, lr_tag) if args.lr_native else lr_disp
     panels = [
-        (lr_disp, f"LR (ch{lr_ch})"),
+        (lr_show, f"LR (ch{lr_ch})"),
         (st_vis, f"Static (ch{st_chan})"),
         (pred_last, pred_title),
         (hr_last, "HR target"),
