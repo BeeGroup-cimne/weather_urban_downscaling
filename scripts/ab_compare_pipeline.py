@@ -31,8 +31,8 @@ def _resize_nearest(arr, target_shape):
 
 
 def _pick_dims(da):
-    lat = next((d for d in da.dims if d in ["latitude", "lat", "y"]), None)
-    lon = next((d for d in da.dims if d in ["longitude", "lon", "x"]), None)
+    lat = next((d for d in da.dims if d in ["latitude_lr", "lat_lr", "y_lr", "latitude", "lat", "y"]), None)
+    lon = next((d for d in da.dims if d in ["longitude_lr", "lon_lr", "x_lr", "longitude", "lon", "x"]), None)
     return lat or da.dims[-2], lon or da.dims[-1]
 
 

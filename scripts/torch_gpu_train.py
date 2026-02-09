@@ -37,8 +37,8 @@ class ZarrIterableDataset(IterableDataset):
         ds = xr.open_zarr(cache_dir, consolidated=True)
         da_lr = ds['lr_input']
         
-        self.lr_lat = next((d for d in da_lr.dims if d in ['latitude', 'lat', 'y']), 'y')
-        self.lr_lon = next((d for d in da_lr.dims if d in ['longitude', 'lon', 'x']), 'x')
+        self.lr_lat = next((d for d in da_lr.dims if d in ['latitude_lr', 'lat_lr', 'y_lr', 'latitude', 'lat', 'y']), 'y')
+        self.lr_lon = next((d for d in da_lr.dims if d in ['longitude_lr', 'lon_lr', 'x_lr', 'longitude', 'lon', 'x']), 'x')
         self.lr_time = next((d for d in da_lr.dims if d in ['time', 'valid_time', 't']), 'time')
         self.lr_var = next((d for d in da_lr.dims if d in ['variable', 'channel', 'var']), None)
         

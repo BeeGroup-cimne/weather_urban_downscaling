@@ -137,8 +137,8 @@ class OptimizedBigDataPipeline:
             
             lr_dims = list(da_lr.dims)
             lr_time = next((d for d in lr_dims if d in ['time', 'valid_time', 't']), 'time')
-            lr_lat = next((d for d in lr_dims if d in ['latitude', 'lat', 'y']), 'y')
-            lr_lon = next((d for d in lr_dims if d in ['longitude', 'lon', 'x']), 'x')
+            lr_lat = next((d for d in lr_dims if d in ['latitude_lr', 'lat_lr', 'y_lr', 'latitude', 'lat', 'y']), 'y')
+            lr_lon = next((d for d in lr_dims if d in ['longitude_lr', 'lon_lr', 'x_lr', 'longitude', 'lon', 'x']), 'x')
             lr_var = next((d for d in lr_dims if d in ['variable', 'channel', 'var']), None)
             
             # Ajustar configuración LR/CHANNELS

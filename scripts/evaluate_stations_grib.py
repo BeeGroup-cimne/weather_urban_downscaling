@@ -148,8 +148,8 @@ def main():
     hr = z["hr_target"]
 
     # Sync Config shapes from cache before building model
-    lr_lat_dim = next(d for d in lr.dims if d in ["latitude", "lat", "y"])
-    lr_lon_dim = next(d for d in lr.dims if d in ["longitude", "lon", "x"])
+    lr_lat_dim = next(d for d in lr.dims if d in ["latitude_lr", "lat_lr", "y_lr", "latitude", "lat", "y"])
+    lr_lon_dim = next(d for d in lr.dims if d in ["longitude_lr", "lon_lr", "x_lr", "longitude", "lon", "x"])
     hr_lat_dim = next(d for d in hr.dims if d in ["latitude", "lat", "y"])
     hr_lon_dim = next(d for d in hr.dims if d in ["longitude", "lon", "x"])
     Config.LR_SHAPE = (lr.sizes[lr_lat_dim], lr.sizes[lr_lon_dim])
@@ -157,7 +157,7 @@ def main():
     times = _time_index(z["time"].values)
 
     # Detect lon order mismatch for LR
-    lr_lon = next(d for d in lr.dims if d in ["longitude", "lon", "x"])
+    lr_lon = next(d for d in lr.dims if d in ["longitude_lr", "lon_lr", "x_lr", "longitude", "lon", "x"])
     hr_lon = next(d for d in hr.dims if d in ["longitude", "lon", "x"])
     flip_lr_lon = False
     try:

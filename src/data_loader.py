@@ -494,11 +494,41 @@ class BigDataPipeline:
         # Para HR: (Time, Lat, Lon)
         ds_hr_norm = ds_hr_norm.transpose('time', hr_lat_dim, hr_lon_dim)
 
+        # --- ✅ EVITAR ALINEACIÓN LR->HR EN XARRAY ---
+        # Si LR y HR comparten nombres de dims, xarray intenta alinear y expande LR con NaNs.
+        # Renombramos dims de LR para que sean independientes.
+        lr_lat_dim = 'latitude' if 'latitude' in ds_lr_norm.dims else ('lat' if 'lat' in ds_lr_norm.dims else 'y')
+        lr_lon_dim = 'longitude' if 'longitude' in ds_lr_norm.dims else ('lon' if 'lon' in ds_lr_norm.dims else 'x')
+        rename_map = {}
+        if lr_lat_dim == hr_lat_dim:
+            rename_map[lr_lat_dim] = f"{lr_lat_dim}_lr"
+        if lr_lon_dim == hr_lon_dim:
+            rename_map[lr_lon_dim] = f"{lr_lon_dim}_lr"
+        if rename_map:
+            ds_lr_norm = ds_lr_norm.rename(rename_map)
+            lr_lat_dim = rename_map.get(lr_lat_dim, lr_lat_dim)
+            lr_lon_dim = rename_map.get(lr_lon_dim, lr_lon_dim)
+
+        # --- 🧪 SANITY: evitar LR alineado (NaNs masivos) ---
+        # Revisamos una muestra pequeña para detectar alineación accidental con HR.
+        try:
+            t_dim = "time" if "time" in ds_lr_norm.dims else ds_lr_norm.dims[0]
+            t_len = int(ds_lr_norm.sizes.get(t_dim, 1))
+            t_slice = slice(0, min(10, t_len))
+            lr_nan_ratio = float(ds_lr_norm.isnull().isel({t_dim: t_slice}).mean().compute().item())
+            if lr_nan_ratio > 0.01:
+                raise RuntimeError(
+                    f"LR NaN ratio alto ({lr_nan_ratio:.3f}) en muestra. "
+                    "Probable alineación LR→HR por dims compartidas."
+                )
+        except Exception as e:
+            print(f"⚠️ Sanity LR NaN ratio: {e}")
+
         # 8. Guardar
         ds_final = xr.Dataset({"hr_target": ds_hr_norm, "lr_input": ds_lr_norm})
         
         # Actualizamos la config con las dimensiones reales lat/lon
-        self.cfg.LR_SHAPE = (ds_lr_clipped.sizes['latitude'], ds_lr_clipped.sizes['longitude'])
+        self.cfg.LR_SHAPE = (ds_lr_norm.sizes[lr_lat_dim], ds_lr_norm.sizes[lr_lon_dim])
         
         if os.path.exists(self.cache_dir): shutil.rmtree(self.cache_dir)
         
@@ -524,8 +554,8 @@ class BigDataPipeline:
         # Buscamos qué nombres usa Específicamente la variable 'lr_input'
         da_lr = ds['lr_input']
         lr_dims_list = list(da_lr.dims)
-        lr_lat = next((d for d in lr_dims_list if d in ['latitude', 'lat', 'y']), 'y')
-        lr_lon = next((d for d in lr_dims_list if d in ['longitude', 'lon', 'x']), 'x')
+        lr_lat = next((d for d in lr_dims_list if d in ['latitude_lr', 'lat_lr', 'y_lr', 'latitude', 'lat', 'y']), 'y')
+        lr_lon = next((d for d in lr_dims_list if d in ['longitude_lr', 'lon_lr', 'x_lr', 'longitude', 'lon', 'x']), 'x')
         
         # Tamaño REAL del input (debe ser pequeño, ej: 5x9)
         real_lr_h = da_lr.sizes[lr_lat]
