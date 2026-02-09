@@ -205,7 +205,23 @@ class BigDataPipeline:
         print("🚀 Iniciando ETL Multi-Canal...")
         
         # 1. Carga Lazy
-        ds_hr = xr.open_mfdataset(self.cfg.PATH_HR, chunks={'time': 100}, parallel=True)
+        # HDF5 file locking can cause intermittent "NetCDF: HDF error" inside containers
+        os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
+
+        def _open_hr_dataset(path):
+            if os.path.isfile(path):
+                try:
+                    return xr.open_dataset(path, chunks={'time': 100})
+                except Exception as e:
+                    print(f"⚠️ HR open_dataset failed ({e}). Reintentando con engine='h5netcdf'...")
+                    return xr.open_dataset(path, engine="h5netcdf", chunks={'time': 100})
+            try:
+                return xr.open_mfdataset(path, chunks={'time': 100}, parallel=True)
+            except Exception as e:
+                print(f"⚠️ HR open_mfdataset failed ({e}). Reintentando con engine='h5netcdf' y parallel=False...")
+                return xr.open_mfdataset(path, engine="h5netcdf", chunks={'time': 100}, parallel=False)
+
+        ds_hr = _open_hr_dataset(self.cfg.PATH_HR)
         # LR puede ser un archivo único o un patrón con múltiples GRIB
         lr_path = self.cfg.PATH_LR
         cfgrib_kwargs = {
