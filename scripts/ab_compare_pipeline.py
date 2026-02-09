@@ -46,6 +46,8 @@ def _run_variant(tag, cfg, args, overrides, sample_idx):
     out_dir = os.path.join(out_root, tag)
     os.makedirs(out_dir, exist_ok=True)
 
+    base_static_path = cfg.STATIC_CACHE_PATH
+
     cfg.PATH_CACHE = os.path.join(out_dir, "weather_cache.zarr")
     cfg.STATS_PATH = os.path.join(out_dir, "stats_config.npz")
     cfg.STATIC_CACHE_PATH = os.path.join(out_dir, "static_processed.npy")
@@ -53,9 +55,21 @@ def _run_variant(tag, cfg, args, overrides, sample_idx):
 
     _apply_overrides(cfg, overrides)
 
-    if (not args.reuse_cache) or (not os.path.exists(cfg.PATH_CACHE)):
-        pipeline = BigDataPipeline(cfg)
+    pipeline = BigDataPipeline(cfg)
+
+    static_data = None
+    if (not args.force_process_static) and base_static_path and os.path.exists(base_static_path):
+        try:
+            static_data = np.load(base_static_path)
+            print(f"✅ Static loaded from base cache: {base_static_path}")
+        except Exception as e:
+            print(f"⚠️ No se pudo cargar static base ({base_static_path}): {e}")
+
+    if static_data is None:
         pipeline.process_static_data()
+        static_data = np.load(cfg.STATIC_CACHE_PATH)
+
+    if (not args.reuse_cache) or (not os.path.exists(cfg.PATH_CACHE)):
         pipeline.run_etl_process()
 
     ds = xr.open_zarr(cfg.PATH_CACHE, consolidated=True)
@@ -81,8 +95,7 @@ def _run_variant(tag, cfg, args, overrides, sample_idx):
         lr_sample = lr_sample[..., 0]
     lr_up = _resize_nearest(lr_sample, hr_sample.shape)
 
-    static = np.load(cfg.STATIC_CACHE_PATH)
-    static_ch = static[:, :, args.static_channel]
+    static_ch = static_data[:, :, args.static_channel]
 
     # Plot
     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
@@ -108,6 +121,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sample-index", type=int, default=None)
     parser.add_argument("--reuse-cache", action="store_true")
+    parser.add_argument("--force-process-static", action="store_true",
+                        help="Force recompute static cache (otherwise reuse base cache if available)")
     parser.add_argument("--lr-channel", type=int, default=0)
     parser.add_argument("--static-channel", type=int, default=12)
     args = parser.parse_args()
