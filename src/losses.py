@@ -56,10 +56,10 @@ if torch is not None:
         coords -= size // 2
         g = torch.exp(-(coords ** 2) / (2 * sigma ** 2))
         g /= g.sum()
-        return g.reshape(1, 1, 1, -1) if size == 1 else g.reshape(1, 1, size, 1)
+        return g
 
     def _create_window(window_size, channel, device, dtype):
-        _1d = _gaussian_window(window_size, 1.5).unsqueeze(1)
+        _1d = _gaussian_window(window_size, 1.5).unsqueeze(1)  # (W, 1)
         _2d = _1d.mm(_1d.t()).float().unsqueeze(0).unsqueeze(0)
         window = _2d.expand(channel, 1, window_size, window_size).contiguous()
         return window.to(device=device, dtype=dtype)

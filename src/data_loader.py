@@ -195,9 +195,9 @@ class BigDataPipeline:
             try:
                 ds_zarr = xr.open_zarr(self.cache_dir)
                 # Intentamos leer dimensiones estándar, fallback a nombres detectados
-                lat_dim = next((d for d in ds_zarr.dims if d in ['latitude', 'lat', 'y']), 'latitude')
-                lon_dim = next((d for d in ds_zarr.dims if d in ['longitude', 'lon', 'x']), 'longitude')
-                self.cfg.LR_SHAPE = (ds_zarr.dims[lat_dim], ds_zarr.dims[lon_dim])
+                lat_dim = next((d for d in ds_zarr.sizes if d in ['latitude', 'lat', 'y']), 'latitude')
+                lon_dim = next((d for d in ds_zarr.sizes if d in ['longitude', 'lon', 'x']), 'longitude')
+                self.cfg.LR_SHAPE = (ds_zarr.sizes[lat_dim], ds_zarr.sizes[lon_dim])
                 return
             except:
                 shutil.rmtree(self.cache_dir)

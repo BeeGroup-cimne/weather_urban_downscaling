@@ -7,10 +7,12 @@ Usa GPUServerConfig y el cache Zarr generado por el pipeline.
 import os
 import sys
 import gc
+import contextlib
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import IterableDataset, DataLoader
 import xarray as xr
 
@@ -25,6 +27,20 @@ from src.data_loader import BigDataPipeline
 from src.losses import TorchHybridLoss
 
 PROJECT_ROOT = parent_dir
+
+
+def _match_pred_to_target_spatial(pred, target):
+    """
+    Ensure prediction matches target spatial resolution.
+    Expected tensors: (B, T, C, H, W)
+    """
+    if pred.shape[-2:] == target.shape[-2:]:
+        return pred
+    b, t, c, h, w = pred.shape
+    target_h, target_w = target.shape[-2:]
+    pred_4d = pred.view(b * t, c, h, w)
+    pred_4d = F.interpolate(pred_4d, size=(target_h, target_w), mode="bilinear", align_corners=False)
+    return pred_4d.view(b, t, c, target_h, target_w)
 
 class ZarrIterableDataset(IterableDataset):
     def __init__(self, cache_dir, config, split='train'):
@@ -143,6 +159,7 @@ class ZarrIterableDataset(IterableDataset):
                     self.static_norm[np.newaxis, ...],
                     (seq_len, *self.static_norm.shape)
                 )
+                x_st = np.ascontiguousarray(x_st)
                 x_st = np.moveaxis(x_st, -1, 1)  # (T, C, H, W)
                 
                 yield (
@@ -192,7 +209,7 @@ def train_gpu():
     criterion = TorchHybridLoss(alpha=0.8).to(device)
     
     use_amp = Config.MIXED_PRECISION and device.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     
     # 4. Training loop
     accumulation_steps = max(1, Config.GRADIENT_ACCUMULATION_STEPS)
@@ -213,8 +230,10 @@ def train_gpu():
             st = st.to(device)
             target = target.to(device)
             
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            autocast_ctx = torch.amp.autocast("cuda", enabled=True) if use_amp else contextlib.nullcontext()
+            with autocast_ctx:
                 output = model(lr, st)
+                output = _match_pred_to_target_spatial(output, target)
                 loss = criterion(output, target) / accumulation_steps
             
             scaler.scale(loss).backward()
@@ -250,6 +269,7 @@ def train_gpu():
                 st = st.to(device)
                 target = target.to(device)
                 output = model(lr, st)
+                output = _match_pred_to_target_spatial(output, target)
                 loss = criterion(output, target)
                 val_loss += loss.item()
                 val_steps += 1

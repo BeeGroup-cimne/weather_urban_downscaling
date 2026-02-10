@@ -1,7 +1,67 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mamba_ssm import Mamba
+
+try:
+    from mamba_ssm import Mamba as _MambaSSM
+    _HAS_MAMBA_SSM = True
+    _MAMBA_IMPORT_ERROR = None
+except Exception as exc:
+    _MambaSSM = None
+    _HAS_MAMBA_SSM = False
+    _MAMBA_IMPORT_ERROR = exc
+
+
+class _FallbackMambaBlock(nn.Module):
+    """
+    Lightweight fallback used when mamba_ssm is unavailable (e.g. local MPS setups).
+    Keeps input/output contract (B, L, C) so training pipeline remains testable.
+    """
+    def __init__(self, d_model, d_state=16, d_conv=4, expand=2):
+        super().__init__()
+        hidden = max(d_model, int(d_model * expand))
+        kernel_size = max(3, int(d_conv))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        self.norm = nn.LayerNorm(d_model)
+        self.depthwise_conv = nn.Conv1d(
+            in_channels=d_model,
+            out_channels=d_model,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=d_model,
+        )
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, d_model),
+        )
+
+    def forward(self, x):
+        # x: (B, L, C)
+        residual = x
+        x = self.norm(x)
+        x = x.transpose(1, 2)              # (B, C, L)
+        x = self.depthwise_conv(x)
+        x = x.transpose(1, 2)              # (B, L, C)
+        if x.shape[1] != residual.shape[1]:
+            x = x[:, :residual.shape[1], :]
+        x = self.proj(x)
+        return residual + x
+
+
+_FALLBACK_WARNED = False
+
+
+def _build_mamba_block(d_model, d_state=16, d_conv=4, expand=2):
+    global _FALLBACK_WARNED
+    if _HAS_MAMBA_SSM:
+        return _MambaSSM(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+    if not _FALLBACK_WARNED:
+        print("⚠️ mamba_ssm not available; using local fallback block for Mamba.")
+        print(f"   Import error: {_MAMBA_IMPORT_ERROR}")
+        _FALLBACK_WARNED = True
+    return _FallbackMambaBlock(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
 
 class DownsrUNetMamba(nn.Module):
     def __init__(self, in_channels_dyn=9, in_channels_static=4, dim=32, seq_len=None):
@@ -25,8 +85,8 @@ class DownsrUNetMamba(nn.Module):
         self.d_model = dim*4
         # Mamba requires (Batch, Seq_Len, D_Model)
         # We will flatten Time * H * W into Seq_Len
-        self.mamba1 = Mamba(d_model=self.d_model, d_state=16, d_conv=4, expand=2)
-        self.mamba2 = Mamba(d_model=self.d_model, d_state=16, d_conv=4, expand=2) # Double block like TF
+        self.mamba1 = _build_mamba_block(d_model=self.d_model, d_state=16, d_conv=4, expand=2)
+        self.mamba2 = _build_mamba_block(d_model=self.d_model, d_state=16, d_conv=4, expand=2) # Double block like TF
         
         # Norm layer for Mamba stability
         self.norm = nn.LayerNorm(self.d_model)
