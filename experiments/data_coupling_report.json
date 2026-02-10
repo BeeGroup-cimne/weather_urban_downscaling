@@ -1,0 +1,341 @@
+{
+  "timestamp": "2026-02-10T13:27:49.803647",
+  "config_class": "Config",
+  "config_paths": {
+    "PATH_HR": "/Users/kerincardona/weather_urban_downscaling/data/processed/estaciones_interpoladas_final.nc",
+    "PATH_LR": "/Users/kerincardona/weather_urban_downscaling/data/processed/era5land/lr_2017.grib",
+    "PATH_STATIC": "/Users/kerincardona/weather_urban_downscaling/data/processed/weather_static_FINAL_stations.zarr",
+    "PATH_CACHE": "/Users/kerincardona/weather_urban_downscaling/data/processed/weather_cache.zarr",
+    "STATS_PATH": "/Users/kerincardona/weather_urban_downscaling/data/processed/stats_config.npz",
+    "STATIC_CACHE_PATH": "/Users/kerincardona/weather_urban_downscaling/data/processed/static_processed.npy"
+  },
+  "spatial_overlap": {
+    "hr_shape": [
+      251,
+      251
+    ],
+    "hr_bbox": {
+      "lat_min": 41.317646,
+      "lat_max": 41.467636,
+      "lon_min": 2.053213,
+      "lon_max": 2.228939
+    },
+    "lr_shape": [
+      5,
+      4
+    ],
+    "lr_bbox": {
+      "lat_min": 41.2,
+      "lat_max": 41.6,
+      "lon_min": 2.0,
+      "lon_max": 2.3
+    },
+    "lr_covers_hr_pct": 100.0
+  },
+  "nan_budget": {
+    "raw_lr_nan_ratio": 0.369743,
+    "raw_lr_sample_timesteps": 24,
+    "cache_lr_input_nan_ratio": 0.0,
+    "cache_lr_input_inf_ratio": 0.0,
+    "cache_hr_target_nan_ratio": 0.0,
+    "cache_hr_target_inf_ratio": 0.0
+  },
+  "normalization": {
+    "mean_lr": {
+      "shape": [
+        9
+      ],
+      "values": [
+        0.016074765473604202,
+        0.31361934542655945,
+        12.586047172546387,
+        17.030866622924805,
+        2.5433473587036133,
+        2.6991841793060303,
+        0.0008392146555706859,
+        9513115.0,
+        0.12123368680477142
+      ]
+    },
+    "std_lr": {
+      "shape": [
+        9
+      ],
+      "values": [
+        2.2297894954681396,
+        2.1372499465942383,
+        5.886899471282959,
+        6.59598970413208,
+        0.6430602669715881,
+        0.2511588931083679,
+        0.009999999776482582,
+        9222755.0,
+        0.023483283817768097
+      ]
+    },
+    "std_lr_raw": {
+      "shape": [
+        9
+      ],
+      "values": [
+        2.2297894954681396,
+        2.1372499465942383,
+        5.886899471282959,
+        6.59598970413208,
+        0.6430602669715881,
+        0.2511588931083679,
+        0.0025919191539287567,
+        9222755.0,
+        0.023483283817768097
+      ]
+    },
+    "mean_hr": {
+      "shape": [],
+      "values": 18.748401641845703
+    },
+    "std_hr": {
+      "shape": [],
+      "values": 6.578956604003906
+    },
+    "std_hr_raw": {
+      "shape": [],
+      "values": 6.578956604003906
+    },
+    "lr_var_names": {
+      "shape": [
+        9
+      ],
+      "values": [
+        "u10",
+        "v10",
+        "d2m",
+        "t2m",
+        "lai_hv",
+        "lai_lv",
+        "tp",
+        "ssrd",
+        "fal"
+      ]
+    },
+    "norm_std_threshold": {
+      "shape": [],
+      "values": 0.01
+    },
+    "norm_std_floor": {
+      "shape": [],
+      "values": 0.01
+    },
+    "lr_std_floor_applied_idx": {
+      "shape": [
+        1
+      ],
+      "values": [
+        6
+      ]
+    },
+    "lr_near_zero_std_count": 1,
+    "lr_near_zero_std_vars": {
+      "indices": [
+        "6"
+      ],
+      "values": [
+        0.002592
+      ],
+      "names": [
+        "tp"
+      ]
+    },
+    "lr_std_floor_applied_count": 1,
+    "lr_std_floor_applied_indices": [
+      6
+    ],
+    "lr_std_floor_applied_names": [
+      "tp"
+    ],
+    "hr_std": 6.578957
+  },
+  "static_coverage": {
+    "shape": [
+      251,
+      251,
+      13
+    ],
+    "dtype": "float32",
+    "nan_pct": 0.0,
+    "inf_pct": 0.0,
+    "n_channels": 13,
+    "channel_stats": [
+      {
+        "channel": 0,
+        "mean": 7.004222,
+        "std": 6.396078,
+        "min": 0.0,
+        "max": 81.0,
+        "nan_pct": 0.0,
+        "zero_pct": 26.763067
+      },
+      {
+        "channel": 1,
+        "mean": 0.202773,
+        "std": 0.26723,
+        "min": 0.0,
+        "max": 1.0,
+        "nan_pct": 0.0,
+        "zero_pct": 26.809098
+      },
+      {
+        "channel": 2,
+        "mean": 0.455605,
+        "std": 0.352071,
+        "min": 0.0,
+        "max": 1.0,
+        "nan_pct": 0.0,
+        "zero_pct": 0.014285
+      },
+      {
+        "channel": 3,
+        "mean": 0.13912,
+        "std": 0.266495,
+        "min": 0.0,
+        "max": 1.0,
+        "nan_pct": 0.0,
+        "zero_pct": 67.559245
+      },
+      {
+        "channel": 4,
+        "mean": 0.075135,
+        "std": 0.151684,
+        "min": 0.0,
+        "max": 0.998745,
+        "nan_pct": 0.0,
+        "zero_pct": 71.867113
+      },
+      {
+        "channel": 5,
+        "mean": 0.018942,
+        "std": 0.064755,
+        "min": 0.0,
+        "max": 0.713076,
+        "nan_pct": 0.0,
+        "zero_pct": 88.608117
+      },
+      {
+        "channel": 6,
+        "mean": 4.542991,
+        "std": 5.006124,
+        "min": 0.0,
+        "max": 44.0,
+        "nan_pct": 0.0,
+        "zero_pct": 26.763067
+      },
+      {
+        "channel": 7,
+        "mean": 0.588978,
+        "std": 0.192794,
+        "min": 0.0,
+        "max": 1.0,
+        "nan_pct": 0.0,
+        "zero_pct": 0.031746
+      },
+      {
+        "channel": 8,
+        "mean": 0.682876,
+        "std": 0.129549,
+        "min": 0.0,
+        "max": 1.0,
+        "nan_pct": 0.0,
+        "zero_pct": 0.915858
+      },
+      {
+        "channel": 9,
+        "mean": 0.114175,
+        "std": 0.246847,
+        "min": 0.0,
+        "max": 0.999608,
+        "nan_pct": 0.0,
+        "zero_pct": 74.832146
+      },
+      {
+        "channel": 10,
+        "mean": 0.229224,
+        "std": 0.358613,
+        "min": 1.1e-05,
+        "max": 3.8208,
+        "nan_pct": 0.0,
+        "zero_pct": 0.0
+      },
+      {
+        "channel": 11,
+        "mean": 0.041452,
+        "std": 0.097518,
+        "min": 0.0,
+        "max": 0.738727,
+        "nan_pct": 0.0,
+        "zero_pct": 77.955905
+      },
+      {
+        "channel": 12,
+        "mean": 0.955664,
+        "std": 0.149088,
+        "min": 0.0,
+        "max": 1.0,
+        "nan_pct": 0.0,
+        "zero_pct": 0.0
+      }
+    ],
+    "source_zarr_bbox": {
+      "lat_min": 41.317646,
+      "lat_max": 41.467636,
+      "lon_min": 2.053213,
+      "lon_max": 2.228939
+    },
+    "source_zarr_n_points": 10222
+  },
+  "temporal_gaps": {
+    "total_timesteps": 8737,
+    "time_range": {
+      "start": "2017-01-01 00:00:00",
+      "end": "2017-12-31 00:00:00"
+    },
+    "gaps_gt_1h": 0,
+    "median_step_hours": 1.0,
+    "train_timesteps": 7296,
+    "train_expected_hours": 7296,
+    "train_coverage_pct": 100.0,
+    "val_timesteps": 720,
+    "val_expected_hours": 720,
+    "val_coverage_pct": 100.0,
+    "test_timesteps": 721,
+    "test_expected_hours": 744,
+    "test_coverage_pct": 96.908602
+  },
+  "cross_correlation": {
+    "lr_reference_variable": "t2m",
+    "lr_reference_index": 3,
+    "mean_corr": 0.559311,
+    "min_corr": -0.067195,
+    "max_corr": 0.818044,
+    "std_corr": 0.221873,
+    "n_samples": 50,
+    "anomaly_threshold": 0.115566,
+    "n_anomalies": 2,
+    "anomalous_timesteps": [
+      {
+        "index": 2674,
+        "corr": 0.113214
+      },
+      {
+        "index": 6418,
+        "corr": -0.067195
+      }
+    ]
+  },
+  "summary": {
+    "issues": [],
+    "warnings": [
+      "1 LR variable(s) had near-zero std but std floor mitigation is active",
+      "2 timesteps with anomalous LR\u2194HR correlation"
+    ],
+    "status": "PASS"
+  }
+}
