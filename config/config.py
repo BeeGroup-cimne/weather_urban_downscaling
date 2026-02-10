@@ -87,6 +87,9 @@ class Config:
     L2_WEIGHT_DECAY = 1e-4
     GAUSSIAN_NOISE_STD = 0.01
     STATS_TRAIN_ONLY = True
+    # Robustez de normalización: evita amplificación extrema cuando std ~= 0
+    NORM_NEAR_ZERO_STD_THRESHOLD = 0.01
+    NORM_STD_FLOOR = 0.01
 
     # ---------------------------------------------------------
     # 5. TILE-BASED TRAINING (Optional)

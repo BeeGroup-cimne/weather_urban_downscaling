@@ -346,7 +346,14 @@ class BigDataPipeline:
             print(f"      LR disponible: {len(times_lr_normalized)} timesteps")
             raise ValueError("❌ Sin coincidencia temporal. Verifica que los datasets cubran el mismo período.")
         
+        # Log dropped timesteps for transparency
+        n_hr_dropped = len(times_hr_normalized) - len(common_times)
+        n_lr_dropped = len(times_lr_normalized) - len(common_times)
         print(f"   ✅ Intersección exitosa: {len(common_times)} timesteps comunes")
+        if n_hr_dropped > 0:
+            print(f"   ⚠️ {n_hr_dropped} timesteps HR descartados (sin match en LR)")
+        if n_lr_dropped > 0:
+            print(f"   ⚠️ {n_lr_dropped} timesteps LR descartados (sin match en HR)")
         ds_hr = ds_hr.sel(time=common_times)
         ds_lr = ds_lr.sel(time=common_times)
 
@@ -468,22 +475,60 @@ class BigDataPipeline:
             mean_hr = ds_hr_stats.mean().compute().item()
             std_hr = ds_hr_stats.std().compute().item()
         
+        # --- Normalization sanity check + robust std floor ---
+        std_threshold = float(getattr(self.cfg, "NORM_NEAR_ZERO_STD_THRESHOLD", 0.01))
+        std_floor = float(getattr(self.cfg, "NORM_STD_FLOOR", std_threshold))
+        std_floor = max(std_floor, std_threshold)
+
+        std_lr_vals = std_lr.values if hasattr(std_lr, 'values') else np.atleast_1d(std_lr)
+        near_zero_mask = std_lr_vals < std_threshold
+        lr_var_names = [f"var_{i}" for i in range(len(std_lr_vals))]
+        if hasattr(ds_lr_stats, "coords") and "variable" in ds_lr_stats.coords:
+            lr_var_names = [str(v) for v in ds_lr_stats["variable"].values.tolist()]
+        if np.any(near_zero_mask):
+            bad_idx = list(np.where(near_zero_mask)[0])
+            bad_vals = [float(std_lr_vals[i]) for i in bad_idx]
+            bad_names = [lr_var_names[i] if i < len(lr_var_names) else f"var_{i}" for i in bad_idx]
+            print(f"   ⚠️ NORMALIZATION WARNING: {len(bad_idx)} LR variable(s) with std < {std_threshold}")
+            print(f"      Indices: {bad_idx}, Names: {bad_names}, Values: {bad_vals}")
+            print("      These channels are near-constant and unstable for raw Z-score.")
+
+        std_lr_safe_vals = np.maximum(std_lr_vals, std_floor)
+        lr_floor_applied_idx = list(np.where(std_lr_safe_vals > std_lr_vals)[0])
+        if lr_floor_applied_idx:
+            lr_floor_names = [lr_var_names[i] if i < len(lr_var_names) else f"var_{i}" for i in lr_floor_applied_idx]
+            print(f"   🛡️ Applied std floor={std_floor} to {len(lr_floor_applied_idx)} LR variable(s)")
+            print(f"      Indices: {lr_floor_applied_idx}, Names: {lr_floor_names}")
+        std_lr_safe = xr.DataArray(std_lr_safe_vals, dims=std_lr.dims, coords=std_lr.coords)
+
+        if std_hr < std_threshold:
+            print(f"   ⚠️ NORMALIZATION WARNING: HR std = {std_hr:.6f} (near-zero)")
+        std_hr_safe = max(float(std_hr), std_floor)
+        if std_hr_safe > std_hr:
+            print(f"   🛡️ Applied std floor={std_floor} to HR std ({std_hr:.6f} -> {std_hr_safe:.6f})")
+
         # Guardar estadísticas para visualizaciones
         try:
             os.makedirs(os.path.dirname(self.stats_path), exist_ok=True)
             np.savez(
                 self.stats_path,
                 mean_lr=mean_lr.values,
-                std_lr=std_lr.values,
+                std_lr=std_lr_safe.values,
+                std_lr_raw=std_lr.values,
                 mean_hr=mean_hr,
-                std_hr=std_hr
+                std_hr=std_hr_safe,
+                std_hr_raw=std_hr,
+                lr_var_names=np.asarray(lr_var_names, dtype=str),
+                norm_std_threshold=std_threshold,
+                norm_std_floor=std_floor,
+                lr_std_floor_applied_idx=np.asarray(lr_floor_applied_idx, dtype=np.int32),
             )
             print(f"   💾 Stats guardadas en: {self.stats_path}")
         except Exception as e:
             print(f"   ⚠️ No se pudieron guardar stats: {e}")
 
-        ds_lr_norm = (ds_lr_clean - mean_lr) / (std_lr + 1e-6)
-        ds_hr_norm = (ds_hr_clean - mean_hr) / (std_hr + 1e-6)
+        ds_lr_norm = (ds_lr_clean - mean_lr) / (std_lr_safe + 1e-6)
+        ds_hr_norm = (ds_hr_clean - mean_hr) / (std_hr_safe + 1e-6)
         
         # --- 🔄 FIX ROTACIÓN: TRANSPOSICIÓN ANTES DE GUARDAR 🔄 ---
         # Aseguramos el orden canónico para Tensorflow: (Time, Lat, Lon, Variable)
@@ -853,8 +898,8 @@ class BigDataPipeline:
                         .values
             y_hr = y_hr[..., np.newaxis] 
             
-            # 3. STATIC
-            x_st = np.repeat(static_norm[np.newaxis, ...], seq_len, axis=0)
+            # 3. STATIC — zero-copy view instead of materializing repeated buffers
+            x_st = np.broadcast_to(static_norm[np.newaxis, ...], (seq_len,) + static_norm.shape)
             
             return (x_lr, x_st), y_hr
 

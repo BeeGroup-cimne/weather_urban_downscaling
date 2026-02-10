@@ -1,14 +1,14 @@
 """
-Configuración optimizada para entrenamiento en GPU server con alta memoria
-Solución a problemas de OOM (Out Of Memory) y memoria limitada
+Configuración optimizada para entrenamiento en GPU server con alta memoria.
+Hereda de Config base y sobreescribe solo lo necesario.
 """
 
 import os
 import platform
 import numpy as np
-from pathlib import Path
+from .config import Config
 
-class GPUServerConfig:
+class GPUServerConfig(Config):
     # ==========================================================
     # DETECCIÓN DE HARDWARE Y MEMORIA
     # ==========================================================
@@ -50,6 +50,12 @@ class GPUServerConfig:
     # CONFIGURACIÓN ADAPTATIVA SEGÚN MEMORIA
     # ==========================================================
     
+    # Default parameters (overwritten by GPU detection logic below)
+    EFFECTIVE_BATCH_SIZE = Config.BATCH_SIZE
+    GRADIENT_ACCUMULATION_STEPS = 1
+    MIXED_PRECISION = False
+    MODEL_DIM = 64 # Valor base
+
     if GPU_MEMORY_GB is None:
         # Fallback para CPU
         BATCH_SIZE = 1
@@ -85,57 +91,15 @@ class GPUServerConfig:
     # Override: desactivar mixed precision para evitar loss scaling en loop custom
     MIXED_PRECISION = False
     
+    # Effective batch size update
+    EFFECTIVE_BATCH_SIZE = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
+
     # ==========================================================
-    # RUTAS DE ARCHIVOS (mismas que original)
-    # ==========================================================
-    
-    BASE_DIR = Path(__file__).resolve().parent.parent
-    
-    PATH_HR = str(BASE_DIR / "data" / "processed" / "estaciones_interpoladas_final.nc")
-    PATH_LR = str(BASE_DIR / "data" / "processed" / "era5land" / "lr_2017.grib")
-    PATH_STATIC = str(BASE_DIR / "data" / "processed" / "weather_static_FINAL_stations.zarr")
-    PATH_CACHE = str(BASE_DIR / "data" / "processed" / "weather_cache.zarr")
-    
-    EXPERIMENTS_DIR = str(BASE_DIR / "experiments")
-    STATS_PATH = str(BASE_DIR / "data" / "processed" / "stats_config.npz")
-    STATIC_CACHE_PATH = str(BASE_DIR / "data" / "processed" / "static_processed.npy")
-    
-    # ==========================================================
-    # SPLITS TEMPORALES (para paper)
-    # ==========================================================
-    SPLIT_MODE = "time"  # "time" o "fraction"
-    TRAIN_START = "2017-01-01"
-    TRAIN_END = "2017-11-01"
-    VAL_START = "2017-11-01"
-    VAL_END = "2017-12-01"
-    TEST_START = "2017-12-01"
-    TEST_END = "2018-01-01"
-    
-    # ==========================================================
-    # HIPERPARÁMETROS OPTIMIZADOS
+    # HIPERPARÁMETROS OPTIMIZADOS (Overrides)
     # ==========================================================
     
-    SEED = 42
     EPOCHS = 100  # Más épocas con batches más pequeños
     LEARNING_RATE = 5e-5  # Learning rate más pequeño para estabilidad
-    
-    # Effective batch size = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
-    EFFECTIVE_BATCH_SIZE = BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS
-    
-    # ==========================================================
-    # DIMENSIONES (Reducciones para ahorrar memoria)
-    # ==========================================================
-    
-    HR_SHAPE = (251, 251)
-    LR_SHAPE = (4, 3)
-    CHANNELS = 9
-    STATIC_CHANNELS = 13
-    UNET_BASE_FILTERS = 32
-
-    # Regularización / generalización
-    L2_WEIGHT_DECAY = 1e-4
-    GAUSSIAN_NOISE_STD = 0.01
-    STATS_TRAIN_ONLY = True
     
     # Dimensiones de modelo adaptativas
     UNET_FILTERS = 64  # Reducido de 128
@@ -147,12 +111,6 @@ class GPUServerConfig:
     # CONFIGURACIÓN DE MEMORIA Y PERFORMANCE
     # ==========================================================
     
-    # Mixed precision training
-    MIXED_PRECISION = MIXED_PRECISION
-    
-    # Gradient accumulation para batches efectivos más grandes
-    GRADIENT_ACCUMULATION_STEPS = GRADIENT_ACCUMULATION_STEPS
-    
     # Configuración de datos optimizada
     ZARR_CHUNK_SIZE = 50  # Chunks más pequeños
     STATIC_BROADCASTING = True  # Evitar np.repeat
@@ -162,7 +120,6 @@ class GPUServerConfig:
      # Memory monitoring
     MEMORY_MONITORING = True
     GPU_MEMORY_FRACTION = 0.9  # Usar 90% de GPU memory
-    SPLIT_FRACTION = 0.8  # Fraction for train/validation split
     
     # Checkpointing y recuperación
     ENABLE_CHECKPOINTING = True
@@ -174,24 +131,6 @@ class GPUServerConfig:
     # Limitar pasos por época (None = usar todo el dataset)
     MAX_STEPS_PER_EPOCH = None
 
-    # ==========================================================
-    # TILE-BASED TRAINING (Optional)
-    # ==========================================================
-    PATCH_SIZE = (96, 96)
-    PATCHES_PER_EPOCH = 2000
-    VAL_PATCHES_PER_EPOCH = 200
-    TILE_SAMPLER = "static_weighted"  # "static_weighted" | "uniform" | "error_weighted"
-    TILE_WEIGHT_ALPHA = 0.85
-    TILE_WEIGHT_GAMMA = 1.0
-    TILE_MIN_PROB = 1e-6
-    TILE_ERROR_MAP_PATH = str(BASE_DIR / "experiments" / "tiles_error_map.npy")
-    TEMPORAL_STRIDE = 1
-    TEMPORAL_SAMPLER = "uniform"  # "uniform" | "weighted" | "weighted_station"
-    TEMPORAL_WEIGHT_GAMMA = 1.0
-    TEMPORAL_MIN_PROB = 1e-6
-    TEMPORAL_SEASON_BALANCE = False
-    STATION_GRIB_PATH = str(BASE_DIR / "data" / "processed" / "stations_t2m.grib")
-    
     # ==========================================================
     # CONFIGURACIÓN DE DOCKER Y ENTORNO
     # ==========================================================
