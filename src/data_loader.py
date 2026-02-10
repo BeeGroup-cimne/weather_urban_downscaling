@@ -426,13 +426,16 @@ class BigDataPipeline:
         # 2. Relleno Latitudinal (Norte-Sur) - Para esquinas rebeldes
         ds_lr_clean = ds_lr_clean.interpolate_na(dim='latitude', method='nearest', fill_value="extrapolate")
         
-        # 3. Fallback Temporal (Por si queda algún hueco raro)
-        ds_lr_clean = ds_lr_clean.ffill(dim='time').bfill(dim='time')
+        # 3. Fallback Temporal (evita dependencia de bottleneck en contenedores)
+        ds_lr_clean = ds_lr_clean.interpolate_na(dim='time', method='nearest', fill_value="extrapolate")
         # -----------------------------------------------
         
-        # HR Clean
-        ds_hr_clean = ds_hr["tas_C"].ffill(dim=hr_lon_dim).bfill(dim=hr_lon_dim) \
-                                    .ffill(dim=hr_lat_dim).bfill(dim=hr_lat_dim)
+        # HR Clean (nearest/extrapolate para evitar ffill/bfill -> bottleneck)
+        ds_hr_clean = ds_hr["tas_C"].interpolate_na(
+            dim=hr_lon_dim, method='nearest', fill_value="extrapolate"
+        ).interpolate_na(
+            dim=hr_lat_dim, method='nearest', fill_value="extrapolate"
+        )
 
         # Rellenar NaNs restantes (LR y HR) si existen
         try:
