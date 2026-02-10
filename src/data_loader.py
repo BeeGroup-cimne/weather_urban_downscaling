@@ -427,7 +427,14 @@ class BigDataPipeline:
         ds_lr_clean = ds_lr_clean.interpolate_na(dim='latitude', method='nearest', fill_value="extrapolate")
         
         # 3. Fallback Temporal (evita dependencia de bottleneck en contenedores)
-        ds_lr_clean = ds_lr_clean.interpolate_na(dim='time', method='nearest', fill_value="extrapolate")
+        # For interpolate_na over a core dimension with dask='parallelized',
+        # xarray may require a single chunk along that dimension.
+        try:
+            ds_lr_clean = ds_lr_clean.chunk({'time': -1}).interpolate_na(
+                dim='time', method='nearest', fill_value="extrapolate"
+            )
+        except Exception as e:
+            print(f"   ⚠️ Temporal interpolate_na failed ({e}); will use mean-fill fallback if needed.")
         # -----------------------------------------------
         
         # HR Clean (nearest/extrapolate para evitar ffill/bfill -> bottleneck)
