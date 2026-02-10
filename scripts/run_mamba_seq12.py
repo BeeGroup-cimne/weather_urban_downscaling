@@ -4,6 +4,12 @@ Run Mamba training with SEQ_LEN=12 using the existing torch training pipeline.
 This is intended for paper experiments (longer temporal context).
 """
 
+import os
+import sys
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(PROJECT_ROOT)
+
 from config.runtime import Config
 from scripts.torch_gpu_train import train_gpu
 
