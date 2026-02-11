@@ -11,7 +11,16 @@ import numpy as np
 import tensorflow as tf
 import xarray as xr
 
-from scripts.fig_utils import ensure_dir, default_fig_dir, safe_import_matplotlib, timestamp
+from scripts.fig_utils import (
+    default_fig_dir,
+    ensure_dir,
+    extract_lat_lon_2d_from_da,
+    parse_percentile_range,
+    robust_limits,
+    safe_import_cartopy,
+    safe_import_matplotlib,
+    timestamp,
+)
 from config.runtime import Config
 from src.models_legacy import ModelZoo
 from src.data_loader import BigDataPipeline
@@ -41,8 +50,26 @@ def main():
                         help="Show LR at native resolution (no upsample for display).")
     parser.add_argument("--rotate", type=int, default=0,
                         help="Rotate all panels by degrees (0, 90, 180, 270, -90, -180, -270).")
+    parser.add_argument("--temp-cmap", default="inferno", help="Colormap for temperature-like fields")
+    parser.add_argument("--static-cmap", default="cividis", help="Colormap for static layer")
+    parser.add_argument("--error-cmap", default="magma", help="Colormap for absolute error")
+    parser.add_argument(
+        "--percentiles",
+        default="2,98",
+        help="Robust color limits as 'low,high' percentiles for temperature panels",
+    )
+    parser.add_argument("--vmin", type=float, default=None, help="Fixed minimum for temperature scale")
+    parser.add_argument("--vmax", type=float, default=None, help="Fixed maximum for temperature scale")
+    parser.add_argument("--coastline", action="store_true", help="Overlay coastline if coordinates are available")
+    parser.add_argument(
+        "--coastline-resolution",
+        default="10m",
+        choices=["110m", "50m", "10m"],
+        help="Natural Earth coastline resolution",
+    )
     parser.add_argument("--out", default="")
     args = parser.parse_args()
+    pct_low, pct_high = parse_percentile_range(args.percentiles, default=(2.0, 98.0))
 
     if not safe_import_matplotlib():
         return 1
@@ -125,6 +152,10 @@ def main():
         lr_last = lr_last.numpy()
     lr_up = tf.image.resize(lr_last[..., None], Config.HR_SHAPE, method="nearest").numpy()[..., 0]
     st_vis = st_last[..., st_chan]  # selected static channel
+    if hasattr(st_vis, "numpy"):
+        st_vis = st_vis.numpy()
+    if hasattr(pred_last, "numpy"):
+        pred_last = pred_last.numpy()
     # Baseline prediction if model is skipped
     if args.skip_model:
         pred_last = lr_up
@@ -182,12 +213,6 @@ def main():
             return np.fliplr(arr.T)
         return arr
 
-    def _stretch(data):
-        p2, p98 = np.nanpercentile(data, [2, 98])
-        if p2 == p98:
-            p2, p98 = np.nanmin(data), np.nanmax(data)
-        return p2, p98
-
     def _apply_rotate(arr):
         deg = args.rotate % 360
         if deg == 0:
@@ -195,22 +220,92 @@ def main():
         k = deg // 90
         return np.rot90(arr, k)
 
-    fig, axes = plt.subplots(1, 5, figsize=(14, 3))
-    pred_title = "Prediction" if not args.skip_model else "Baseline (LR upsample)"
     lr_show = _apply_transform(lr_last, lr_tag) if args.lr_native else lr_disp
+    temp_vmin, temp_vmax = robust_limits(
+        [lr_show, pred_last, hr_last],
+        pct_low=pct_low,
+        pct_high=pct_high,
+        hard_min=args.vmin,
+        hard_max=args.vmax,
+    )
+    st_vmin, st_vmax = robust_limits([st_vis], pct_low=2.0, pct_high=98.0)
+    _, err_vmax = robust_limits([err], pct_low=0.0, pct_high=99.0, hard_min=0.0, hard_max=None)
+
+    lat2d = None
+    lon2d = None
+    use_geo = False
+    ccrs = None
+    if args.coastline:
+        ccrs, _ = safe_import_cartopy()
+        if ccrs is None:
+            print("⚠️ Coastline disabled: cartopy not available.")
+        elif args.rotate % 360 != 0:
+            print("⚠️ Coastline disabled: rotation changes map orientation. Use --rotate 0.")
+        else:
+            try:
+                try:
+                    ds_geo = xr.open_zarr(Config.PATH_CACHE, consolidated=True)
+                except Exception:
+                    ds_geo = xr.open_zarr(Config.PATH_CACHE)
+                da_geo = ds_geo["hr_target"]
+                lat2d, lon2d = extract_lat_lon_2d_from_da(da_geo)
+                ds_geo.close()
+                if lat2d is None or lon2d is None:
+                    print("⚠️ Coastline disabled: usable lat/lon coordinates were not found.")
+                elif lat2d.shape != hr_last.shape or lon2d.shape != hr_last.shape:
+                    print("⚠️ Coastline disabled: coordinate shape does not match HR fields.")
+                else:
+                    use_geo = True
+            except Exception as exc:
+                print(f"⚠️ Coastline disabled: could not load coordinates ({exc}).")
+
+    if use_geo and args.lr_native:
+        print("⚠️ --lr-native ignored because coastline mode needs HR-aligned grids.")
+        lr_show = lr_disp
+
+    pred_title = "Prediction" if not args.skip_model else "Baseline (LR upsample)"
     panels = [
-        (lr_show, f"LR (ch{lr_ch})"),
-        (st_vis, f"Static (ch{st_chan})"),
-        (pred_last, pred_title),
-        (hr_last, "HR target"),
-        (err, "Abs error"),
+        (lr_show, f"LR (ch{lr_ch})", args.temp_cmap, temp_vmin, temp_vmax),
+        (st_vis, f"Static (ch{st_chan})", args.static_cmap, st_vmin, st_vmax),
+        (pred_last, pred_title, args.temp_cmap, temp_vmin, temp_vmax),
+        (hr_last, "HR target", args.temp_cmap, temp_vmin, temp_vmax),
+        (err, "Abs error", args.error_cmap, 0.0, err_vmax),
     ]
-    for ax, (data, title) in zip(axes, panels):
+
+    if use_geo:
+        fig, axes = plt.subplots(
+            1,
+            len(panels),
+            figsize=(4.1 * len(panels), 3.4),
+            subplot_kw={"projection": ccrs.PlateCarree()},
+        )
+        lon_min, lon_max = float(np.nanmin(lon2d)), float(np.nanmax(lon2d))
+        lat_min, lat_max = float(np.nanmin(lat2d)), float(np.nanmax(lat2d))
+    else:
+        fig, axes = plt.subplots(1, len(panels), figsize=(14, 3))
+
+    if len(panels) == 1:
+        axes = [axes]
+
+    for ax, (data, title, cmap, vmin, vmax) in zip(axes, panels):
         data = _apply_rotate(data)
-        vmin, vmax = _stretch(data)
-        im = ax.imshow(data, cmap="coolwarm", vmin=vmin, vmax=vmax)
+        if use_geo:
+            im = ax.pcolormesh(
+                lon2d,
+                lat2d,
+                data,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                shading="auto",
+                transform=ccrs.PlateCarree(),
+            )
+            ax.coastlines(resolution=args.coastline_resolution, linewidth=0.6, color="black")
+            ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+        else:
+            im = ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax)
+            ax.axis("off")
         ax.set_title(title, fontsize=9)
-        ax.axis("off")
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     mode_tag = "baseline" if args.skip_model else args.model_type

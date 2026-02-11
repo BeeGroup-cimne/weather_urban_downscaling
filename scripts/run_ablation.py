@@ -28,11 +28,46 @@ from src.losses import tf_hybrid_loss
 EXPERIMENTS_TO_RUN = [
     ("unet", ModelZoo.build_unet),
     ("lstm", ModelZoo.build_hybrid_unet_lstm),
+    ("transformer", ModelZoo.build_transformer),
     ("mamba", ModelZoo.build_hybrid_unet_mamba),
 ]
 
 # --- 🧠 FÍSICA: FUNCIÓN DE PÉRDIDA HÍBRIDA (TAO LOSS) ---
 combined_loss = tf_hybrid_loss(alpha=0.8, max_val=5.0)
+
+def _safe_min(values):
+    valid = [v for v in values if v is not None and not pd.isna(v)]
+    if not valid:
+        return float("nan")
+    return float(min(valid))
+
+def _get_last_epoch_metrics(history, log_path):
+    """
+    Return last-epoch metrics preferring CSV log (source of truth on resume/interruptions),
+    with fallback to in-memory Keras History.
+    """
+    if os.path.exists(log_path):
+        try:
+            df = pd.read_csv(log_path)
+            if not df.empty:
+                last = df.iloc[-1]
+                return {
+                    "final_epoch": int(last["epoch"]) if "epoch" in df.columns and pd.notna(last["epoch"]) else len(df) - 1,
+                    "final_val_loss": float(last["val_loss"]) if "val_loss" in df.columns and pd.notna(last["val_loss"]) else float("nan"),
+                    "final_val_mae": float(last["val_mae"]) if "val_mae" in df.columns and pd.notna(last["val_mae"]) else float("nan"),
+                }
+        except Exception as e:
+            print(f"⚠️ No se pudo leer el log para métricas finales ({log_path}): {e}")
+
+    hist = getattr(history, "history", {}) or {}
+    val_loss = hist.get("val_loss", [])
+    val_mae = hist.get("val_mae", [])
+    final_epoch = len(val_loss) - 1 if val_loss else (len(val_mae) - 1 if val_mae else None)
+    return {
+        "final_epoch": final_epoch,
+        "final_val_loss": float(val_loss[-1]) if val_loss else float("nan"),
+        "final_val_mae": float(val_mae[-1]) if val_mae else float("nan"),
+    }
 
 def main():
     parser = argparse.ArgumentParser()
@@ -40,8 +75,14 @@ def main():
         "--models",
         nargs="+",
         default=None,
-        choices=["unet", "lstm", "mamba"],
-        help="Run only the selected models in order (default: unet lstm mamba).",
+        choices=["unet", "lstm", "transformer", "mamba"],
+        help="Run only the selected models in order (default: unet lstm transformer mamba).",
+    )
+    parser.add_argument(
+        "--min-seq-len",
+        type=int,
+        default=6,
+        help="Minimum temporal sequence length for all models in ablation.",
     )
     args = parser.parse_args()
 
@@ -50,6 +91,10 @@ def main():
     
     output_base_dir = Config.EXPERIMENTS_DIR
     os.makedirs(output_base_dir, exist_ok=True)
+
+    if getattr(Config, "SEQ_LEN", 0) < args.min_seq_len:
+        print(f"   ⏱️ Ajustando SEQ_LEN: {Config.SEQ_LEN} -> {args.min_seq_len}")
+        Config.SEQ_LEN = args.min_seq_len
     
     all_histories = {}
     results_summary = []
@@ -165,13 +210,18 @@ def main():
         )
         
         all_histories[strategy_name] = history
+        log_path = os.path.join(output_base_dir, "logs", f"{experiment_name}_log.csv")
+        final_metrics = _get_last_epoch_metrics(history, log_path)
         
         # Guardamos métricas
         results_summary.append({
             'Model': strategy_name,
             'Params': model.count_params(),
-            'Best_Val_Loss': min(history.history['val_loss']),
-            'Best_Val_MAE': min(history.history['val_mae'])
+            'Final_Epoch': final_metrics["final_epoch"],
+            'Final_Val_Loss': final_metrics["final_val_loss"],
+            'Final_Val_MAE': final_metrics["final_val_mae"],
+            'Best_Val_Loss': _safe_min(history.history.get('val_loss', [])),
+            'Best_Val_MAE': _safe_min(history.history.get('val_mae', []))
         })
         
         # D. Visualizar

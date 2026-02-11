@@ -18,6 +18,12 @@ sys.path.append(PROJECT_ROOT)
 
 from config.runtime import Config
 from src.models_legacy import ModelZoo
+from scripts.fig_utils import (
+    extract_lat_lon_2d_from_da,
+    parse_percentile_range,
+    robust_limits,
+    safe_import_cartopy,
+)
 
 
 def _order(vals):
@@ -67,12 +73,30 @@ def main():
     parser.add_argument("--use-last", action="store_true", help="use last timestep of sequence for output")
     parser.add_argument("--lr-channel", type=int, default=0, help="LR channel index for visualization")
     parser.add_argument("--experiment-name", default=None, help="label used in outputs and titles")
+    parser.add_argument("--temp-cmap", default="inferno", help="Colormap for temperature-like fields")
+    parser.add_argument("--error-cmap", default="magma", help="Colormap for absolute error panel")
+    parser.add_argument("--coastline", action="store_true", help="Overlay coastline (requires cartopy + coords)")
+    parser.add_argument(
+        "--coastline-resolution",
+        default="10m",
+        choices=["110m", "50m", "10m"],
+        help="Natural Earth coastline resolution",
+    )
+    parser.add_argument(
+        "--percentiles",
+        default="2,98",
+        help="Robust color limits as 'low,high' percentiles for temperature panels",
+    )
+    parser.add_argument("--vmin", type=float, default=None, help="Fixed minimum for temperature color scale")
+    parser.add_argument("--vmax", type=float, default=None, help="Fixed maximum for temperature color scale")
+    parser.add_argument("--show-error", action="store_true", help="Add absolute error panel")
     parser.add_argument("--out", default=os.path.join("experiments", "figures", "tiles_fullframe_pred.png"))
     args = parser.parse_args()
 
     if not os.path.exists(args.model_path):
         print(f"❌ Model not found: {args.model_path}")
         return 2
+    pct_low, pct_high = parse_percentile_range(args.percentiles, default=(2.0, 98.0))
 
     # Load dataset
     ds = xr.open_zarr(Config.PATH_CACHE, consolidated=True)
@@ -231,22 +255,75 @@ def main():
     lr_ch = max(0, min(lr_ch, lr_last.shape[-1] - 1))
     lr_img = lr_last[:, :, lr_ch]
     lr_up = tf.image.resize(lr_img[..., None], (hr_h, hr_w), method="bilinear").numpy()[..., 0]
+    abs_err = np.abs(full_pred - hr_last)
 
-    vmin = float(np.nanmin(hr_last))
-    vmax = float(np.nanmax(hr_last))
-    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
-        vmin, vmax = None, None
+    vmin, vmax = robust_limits(
+        [lr_up, full_pred, hr_last],
+        pct_low=pct_low,
+        pct_high=pct_high,
+        hard_min=args.vmin,
+        hard_max=args.vmax,
+    )
+    _, err_vmax = robust_limits([abs_err], pct_low=0.0, pct_high=99.0, hard_min=0.0, hard_max=None)
 
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
-    axes[0].imshow(lr_up, cmap="viridis", origin="lower", vmin=vmin, vmax=vmax)
-    axes[0].set_title(f"LR (upsampled) ch={lr_ch}")
-    axes[0].axis("off")
-    axes[1].imshow(full_pred, cmap="viridis", origin="lower", vmin=vmin, vmax=vmax)
-    axes[1].set_title("Prediction (tiles->full)")
-    axes[1].axis("off")
-    axes[2].imshow(hr_last, cmap="viridis", origin="lower", vmin=vmin, vmax=vmax)
-    axes[2].set_title("HR Ground Truth")
-    axes[2].axis("off")
+    panels = [
+        (lr_up, f"LR (upsampled) ch={lr_ch}", args.temp_cmap, vmin, vmax),
+        (full_pred, "Prediction (tiles->full)", args.temp_cmap, vmin, vmax),
+        (hr_last, "HR Ground Truth", args.temp_cmap, vmin, vmax),
+    ]
+    if args.show_error:
+        panels.append((abs_err, "Abs Error", args.error_cmap, 0.0, err_vmax))
+
+    lat2d, lon2d = extract_lat_lon_2d_from_da(da_hr)
+    use_geo = False
+    ccrs = None
+    if args.coastline:
+        ccrs, _ = safe_import_cartopy()
+        if ccrs is None:
+            print("⚠️ Coastline disabled: cartopy not available.")
+        elif lat2d is None or lon2d is None:
+            print("⚠️ Coastline disabled: dataset does not expose usable lat/lon coordinates.")
+        elif lat2d.shape != (hr_h, hr_w) or lon2d.shape != (hr_h, hr_w):
+            print("⚠️ Coastline disabled: coordinate shape mismatch with HR grid.")
+        else:
+            use_geo = True
+
+    n_panels = len(panels)
+    if use_geo:
+        fig, axes = plt.subplots(
+            1,
+            n_panels,
+            figsize=(4.4 * n_panels, 4.2),
+            subplot_kw={"projection": ccrs.PlateCarree()},
+        )
+        lon_min, lon_max = float(np.nanmin(lon2d)), float(np.nanmax(lon2d))
+        lat_min, lat_max = float(np.nanmin(lat2d)), float(np.nanmax(lat2d))
+    else:
+        fig, axes = plt.subplots(1, n_panels, figsize=(4.2 * n_panels, 4.0))
+
+    if n_panels == 1:
+        axes = [axes]
+
+    for ax, (data, title, cmap, pmin, pmax) in zip(axes, panels):
+        if use_geo:
+            im = ax.pcolormesh(
+                lon2d,
+                lat2d,
+                data,
+                cmap=cmap,
+                vmin=pmin,
+                vmax=pmax,
+                shading="auto",
+                transform=ccrs.PlateCarree(),
+            )
+            ax.coastlines(resolution=args.coastline_resolution, linewidth=0.6, color="black")
+            ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+        else:
+            im = ax.imshow(data, cmap=cmap, origin="lower", vmin=pmin, vmax=pmax)
+            ax.axis("off")
+        ax.set_title(title)
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
     fig.suptitle(exp_name, fontsize=12)
     plt.tight_layout()
     plt.savefig(out_png, dpi=160, bbox_inches="tight")

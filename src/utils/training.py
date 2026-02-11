@@ -227,6 +227,25 @@ def visualize_results(model, val_ds, title):
                 return arr
             return np.rot90(arr, deg // 90)
 
+        def _robust_limits(arrays, pct_low=2.0, pct_high=98.0):
+            vals = []
+            for arr in arrays:
+                vec = np.asarray(arr).ravel()
+                vec = vec[np.isfinite(vec)]
+                if vec.size:
+                    vals.append(vec)
+            if not vals:
+                return None, None
+            merged = np.concatenate(vals)
+            vmin = float(np.nanpercentile(merged, pct_low))
+            vmax = float(np.nanpercentile(merged, pct_high))
+            if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
+                vmin = float(np.nanmin(merged))
+                vmax = float(np.nanmax(merged))
+            if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
+                return None, None
+            return vmin, vmax
+
         plt.subplot(1, 3, 1)
         # x_lr shape: (Batch, Time, Lat, Lon, Chan)
         lr_raw = x_lr[idx, t, :, :, 0]
@@ -237,26 +256,45 @@ def visualize_results(model, val_ds, title):
         hr_ref = y_true_real[idx, t, :, :, 0]
         if hasattr(hr_ref, "numpy"):
             hr_ref = hr_ref.numpy()
+        pred_ref = y_pred_real[idx, t, :, :, 0]
+        if hasattr(pred_ref, "numpy"):
+            pred_ref = pred_ref.numpy()
         lr_disp, lr_tag = _align_lr_for_plot(lr_up, hr_ref)
         print(f"   ℹ️ LR display alignment: {lr_tag}")
+        temp_cmap = os.getenv("PLOT_TEMP_CMAP", "inferno")
+        temp_vmin, temp_vmax = _robust_limits([lr_disp, pred_ref, hr_ref])
         plot_lr_native = os.getenv("PLOT_LR_NATIVE", "1") == "1"
         if plot_lr_native:
             lr_native = _apply_transform(lr_raw, lr_tag)
-            plt.imshow(_rotate(lr_native), cmap='viridis', origin='lower', interpolation='nearest')
+            plt.imshow(
+                _rotate(lr_native),
+                cmap=temp_cmap,
+                origin='lower',
+                interpolation='nearest',
+                vmin=temp_vmin,
+                vmax=temp_vmax,
+            )
         else:
-            plt.imshow(_rotate(lr_disp), cmap='viridis', origin='lower', interpolation='nearest') 
+            plt.imshow(
+                _rotate(lr_disp),
+                cmap=temp_cmap,
+                origin='lower',
+                interpolation='nearest',
+                vmin=temp_vmin,
+                vmax=temp_vmax,
+            )
         plt.title("Input Low Res (LR)")
         plt.axis('off')
 
         # 2. Predicción HR
         plt.subplot(1, 3, 2)
-        plt.imshow(_rotate(y_pred_real[idx, t, :, :, 0]), cmap='viridis',origin='lower')
+        plt.imshow(_rotate(pred_ref), cmap=temp_cmap, origin='lower', vmin=temp_vmin, vmax=temp_vmax)
         plt.title("Prediction (HR)")
         plt.axis('off')
 
         # 3. Ground Truth HR
         plt.subplot(1, 3, 3)
-        plt.imshow(_rotate(y_true_real[idx, t, :, :, 0]), cmap='viridis',origin='lower')
+        plt.imshow(_rotate(hr_ref), cmap=temp_cmap, origin='lower', vmin=temp_vmin, vmax=temp_vmax)
         plt.title("Ground Truth (HR)")
         plt.axis('off')
         

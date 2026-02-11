@@ -145,7 +145,9 @@ class ModelZoo:
 
         x_reshaped = Lambda(flatten_spatial)(x)
         x_norm = LayerNormalization(epsilon=1e-6)(x_reshaped)
-        attn_out = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)(x_norm, x_norm)
+        # key_dim is per-head dimensionality. Using embed_dim directly here explodes memory.
+        head_dim = max(16, embed_dim // max(1, num_heads))
+        attn_out = MultiHeadAttention(num_heads=num_heads, key_dim=head_dim)(x_norm, x_norm)
         attn_out = Dropout(0.1)(attn_out)
         out1 = Add()([x_reshaped, attn_out])
 
@@ -342,8 +344,15 @@ class ModelZoo:
         p3 = TimeDistributed(MaxPooling2D((2, 2)))(c3)
 
         # --- TRANSFORMER BOTTLENECK ---
-        x_neck = TimeDistributed(Conv2D(256, (1, 1), padding="same"))(p3)
-        x_trans = cls.temporal_transformer_block(x_neck, embed_dim=256, num_heads=4)
+        transformer_dim = int(getattr(Config, "MODEL_DIM", 128))
+        transformer_dim = max(64, min(transformer_dim, 256))
+        x_neck = TimeDistributed(Conv2D(transformer_dim, (1, 1), padding="same"))(p3)
+        x_trans = cls.temporal_transformer_block(
+            x_neck,
+            embed_dim=transformer_dim,
+            num_heads=4,
+            ff_dim=transformer_dim * 2,
+        )
 
         # Decoder
         u3 = TimeDistributed(Resizing(c3.shape[2], c3.shape[3]))(x_trans)
