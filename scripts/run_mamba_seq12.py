@@ -16,11 +16,13 @@ from scripts.torch_gpu_train import train_gpu
 
 def apply_overrides():
     Config.SEQ_LEN = 12
+    Config.MAMBA_EXPERIMENT_NAME = "mamba_seq12"
     # Reduce batch for memory safety; keep effective batch roughly constant.
     Config.BATCH_SIZE = 1
     Config.GRADIENT_ACCUMULATION_STEPS = max(4, Config.GRADIENT_ACCUMULATION_STEPS)
     Config.EFFECTIVE_BATCH_SIZE = Config.BATCH_SIZE * Config.GRADIENT_ACCUMULATION_STEPS
     print("✅ Mamba overrides:")
+    print(f"   EXPERIMENT={Config.MAMBA_EXPERIMENT_NAME}")
     print(f"   SEQ_LEN={Config.SEQ_LEN}")
     print(f"   BATCH_SIZE={Config.BATCH_SIZE}")
     print(f"   GRAD_ACC={Config.GRADIENT_ACCUMULATION_STEPS}")

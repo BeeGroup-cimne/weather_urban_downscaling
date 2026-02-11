@@ -42,6 +42,43 @@ def _match_pred_to_target_spatial(pred, target):
     pred_4d = F.interpolate(pred_4d, size=(target_h, target_w), mode="bilinear", align_corners=False)
     return pred_4d.view(b, t, c, target_h, target_w)
 
+
+def _truthy(value):
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _build_amp_scaler(use_amp):
+    if not use_amp:
+        return None
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        return torch.amp.GradScaler("cuda", enabled=True)
+    return torch.cuda.amp.GradScaler(enabled=True)
+
+
+def _autocast_context(use_amp):
+    if not use_amp:
+        return contextlib.nullcontext()
+    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        return torch.amp.autocast("cuda", enabled=True)
+    return torch.cuda.amp.autocast(enabled=True)
+
+
+def _safe_torch_save(payload, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    torch.save(payload, tmp_path)
+    os.replace(tmp_path, path)
+
+
+def _load_torch_checkpoint(path, model, optimizer, scaler, device):
+    state = torch.load(path, map_location=device)
+    model.load_state_dict(state["model_state_dict"])
+    if "optimizer_state_dict" in state:
+        optimizer.load_state_dict(state["optimizer_state_dict"])
+    if scaler is not None and state.get("scaler_state_dict") is not None:
+        scaler.load_state_dict(state["scaler_state_dict"])
+    return state
+
 class ZarrIterableDataset(IterableDataset):
     def __init__(self, cache_dir, config, split='train'):
         super().__init__()
@@ -209,13 +246,56 @@ def train_gpu():
     criterion = TorchHybridLoss(alpha=0.8).to(device)
     
     use_amp = Config.MIXED_PRECISION and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    scaler = _build_amp_scaler(use_amp)
+    if use_amp:
+        print("⚡ AMP activado para CUDA")
+    else:
+        print("ℹ️ AMP desactivado")
+
+    experiment_name = getattr(Config, "MAMBA_EXPERIMENT_NAME", f"mamba_seq{Config.SEQ_LEN}")
+    model_dir = os.path.join(Config.EXPERIMENTS_DIR, "models")
+    logs_dir = os.path.join(Config.EXPERIMENTS_DIR, "logs")
+    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(logs_dir, exist_ok=True)
+
+    ckpt_last = os.path.join(model_dir, f"{experiment_name}_last.pt")
+    ckpt_best = os.path.join(model_dir, f"{experiment_name}_best.pt")
+    history_csv = os.path.join(logs_dir, f"{experiment_name}_torch_log.csv")
+
+    start_epoch = 0
+    best_val = float("inf")
+    history_rows = []
+
+    if os.path.exists(history_csv):
+        try:
+            df_hist = pd.read_csv(history_csv)
+            history_rows = df_hist.to_dict(orient="records")
+        except Exception as e:
+            print(f"⚠️ No se pudo cargar histórico CSV: {e}")
+
+    if _truthy(os.getenv("RESUME_TRAINING", "1")):
+        resume_path = os.getenv("RESUME_CHECKPOINT", "").strip() or ckpt_last
+        if os.path.exists(resume_path):
+            try:
+                state = _load_torch_checkpoint(resume_path, model, optimizer, scaler, device)
+                start_epoch = int(state.get("epoch", 0))
+                best_val = float(state.get("best_val_loss", best_val))
+                print(f"🔁 Resume activo desde: {resume_path}")
+                print(f"   Continuando en epoch {start_epoch + 1}")
+            except Exception as e:
+                print(f"⚠️ No se pudo cargar checkpoint ({resume_path}): {e}")
+        else:
+            print(f"ℹ️ Resume habilitado pero no existe checkpoint: {resume_path}")
     
     # 4. Training loop
     accumulation_steps = max(1, Config.GRADIENT_ACCUMULATION_STEPS)
     epochs = Config.EPOCHS
     
-    for epoch in range(epochs):
+    if start_epoch >= epochs:
+        print(f"✅ Entrenamiento ya completado ({start_epoch}/{epochs} epochs).")
+        return
+
+    for epoch in range(start_epoch, epochs):
         model.train()
         train_loss = 0.0
         steps = 0
@@ -230,17 +310,22 @@ def train_gpu():
             st = st.to(device)
             target = target.to(device)
             
-            autocast_ctx = torch.amp.autocast("cuda", enabled=True) if use_amp else contextlib.nullcontext()
-            with autocast_ctx:
+            with _autocast_context(use_amp):
                 output = model(lr, st)
                 output = _match_pred_to_target_spatial(output, target)
                 loss = criterion(output, target) / accumulation_steps
             
-            scaler.scale(loss).backward()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
             
             if (batch_idx + 1) % accumulation_steps == 0:
-                scaler.step(optimizer)
-                scaler.update()
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             
             train_loss += loss.item() * accumulation_steps
@@ -251,11 +336,15 @@ def train_gpu():
         
         # Flush gradientes restantes
         if steps % accumulation_steps != 0:
-            scaler.step(optimizer)
-            scaler.update()
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             optimizer.zero_grad(set_to_none=True)
         
-        print(f"\n✅ Epoch {epoch+1} | Train Loss: {train_loss/steps:.6f}")
+        avg_train = train_loss / max(1, steps)
+        print(f"\n✅ Epoch {epoch+1} | Train Loss: {avg_train:.6f}")
         
         # Validación rápida
         model.eval()
@@ -274,8 +363,47 @@ def train_gpu():
                 val_loss += loss.item()
                 val_steps += 1
         
+        avg_val = float("nan")
         if val_steps > 0:
-            print(f"   📊 Val Loss: {val_loss/val_steps:.6f}")
+            avg_val = val_loss / val_steps
+            print(f"   📊 Val Loss: {avg_val:.6f}")
+        
+        checkpoint_payload = {
+            "epoch": epoch + 1,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scaler_state_dict": scaler.state_dict() if scaler is not None else None,
+            "best_val_loss": best_val,
+            "experiment_name": experiment_name,
+            "seq_len": Config.SEQ_LEN,
+            "batch_size": Config.BATCH_SIZE,
+            "grad_accumulation": accumulation_steps,
+            "learning_rate": Config.LEARNING_RATE,
+        }
+        _safe_torch_save(checkpoint_payload, ckpt_last)
+
+        if val_steps > 0 and avg_val < best_val:
+            best_val = avg_val
+            checkpoint_payload["best_val_loss"] = best_val
+            _safe_torch_save(checkpoint_payload, ckpt_best)
+            print(f"   💾 Nuevo best checkpoint: {ckpt_best} (val={best_val:.6f})")
+
+        history_rows.append(
+            {
+                "epoch": epoch + 1,
+                "train_loss": avg_train,
+                "val_loss": avg_val,
+                "seq_len": Config.SEQ_LEN,
+                "batch_size": Config.BATCH_SIZE,
+                "grad_accumulation": accumulation_steps,
+            }
+        )
+        try:
+            pd.DataFrame(history_rows).to_csv(history_csv, index=False)
+        except Exception as e:
+            print(f"⚠️ No se pudo guardar histórico CSV: {e}")
+        
+        print(f"   💾 Last checkpoint: {ckpt_last}")
         
         # Limpieza
         gc.collect()
