@@ -27,6 +27,8 @@ data/static/*
 !data/processed/era5land/.gitkeep
 
 # Experiment outputs (can be regenerated)
+experiments/*.csv
+experiments/*.json
 experiments/models/*
 experiments/logs/*
 experiments/figures/*
