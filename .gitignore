@@ -80,3 +80,9 @@ future_projects/
 
 # Local matplotlib config
 .mplconfig/
+scripts/generate_latex_architecture_gallery.py
+scripts/generate_paper_architecture_figures.py
+scripts/generate_paper_block_diagrams.py
+scripts/generate_paper_figure3_like.py
+.gitignore
+scripts/generate_paper_flow_figures.py
