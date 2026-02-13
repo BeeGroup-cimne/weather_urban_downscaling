@@ -4,6 +4,19 @@
 
 This guide provides step-by-step instructions for deploying the Weather Urban Downscaling project on a GPU server with optimized memory management to prevent OOM (Out Of Memory) errors.
 
+## ✅ Recommended (Production): Full-frame Ablation (4 models)
+
+If your definitive entrypoint is `scripts/run_ablation.py` (UNet, UNet+LSTM, Transformer, UNet+Mamba) and you want a clean server run without generating figures by default, use:
+
+```bash
+docker compose -f docker-compose.server-fullframe.yml up --build
+```
+
+This compose file mounts `data/` and `experiments/` as volumes and forces:
+- `USE_GPU_CONFIG=1`
+- `FULLFRAME=1`
+- `SAVE_MODEL_DIAGRAM=0`, `SAVE_VISUALIZATIONS=0`, `SAVE_COMPARATIVE_HISTORY=0` (set to `1` if you need plots)
+
 ## 🎯 What's Included
 
 - **Memory-optimized training pipeline** (60-70% memory reduction)
@@ -175,7 +188,7 @@ weather_urban_downscaling/
 │   ├── data_loader.py         # Original pipeline
 │   └── optimized_data_pipeline.py  # Memory-optimized
 ├── scripts/
-│   ├── run_ablation.py        # Original training
+│   ├── run_ablation.py        # Full-frame ablation (definitive)
 │   ├── gpu_server_train.py    # Optimized training
 │   └── evaluate_for_paper.py  # Results generation
 ├── docker-compose.yml         # Original Docker

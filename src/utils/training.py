@@ -1,6 +1,10 @@
 import os
 import platform
 import datetime
+import matplotlib
+
+# Backend seguro para servidores/headless (puede overridearse via MPLBACKEND).
+matplotlib.use(os.getenv("MPLBACKEND", "Agg"))
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -36,6 +40,9 @@ def notify_completion(message="Proceso finalizado"):
         print('\a')
 
 def plot_comparative_history(histories, save_dir):
+    if os.getenv("SAVE_COMPARATIVE_HISTORY", "1") != "1":
+        print("ℹ️ SAVE_COMPARATIVE_HISTORY!=1. Saltando comparativa.")
+        return
     if not histories: return
     fig, axes = plt.subplots(1, 2, figsize=(18, 6))
     metrics = [('loss', 'Loss'), ('mae', 'MAE')]
@@ -77,17 +84,20 @@ def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=Non
     plot_path = os.path.join(fig_dir, f"{experiment_name}_architecture.png")   
 
     # -- GUARDAR IMAGEN DE LA ARQUITECTURA (OPCIONAL) ---
-    try:
-        print(f"   📸 Guardando diagrama del modelo en {plot_path}...")
-        plot_model(
-            model, 
-            to_file=plot_path, 
-            show_shapes=True, 
-            show_layer_names=True,
-            expand_nested=True
-        )
-    except Exception as e:
-        print(f"   ⚠️ No se pudo graficar el modelo (quizás falta graphviz): {e}")
+    if os.getenv("SAVE_MODEL_DIAGRAM", "1") == "1":
+        try:
+            print(f"   📸 Guardando diagrama del modelo en {plot_path}...")
+            plot_model(
+                model,
+                to_file=plot_path,
+                show_shapes=True,
+                show_layer_names=True,
+                expand_nested=True,
+            )
+        except Exception as e:
+            print(f"   ⚠️ No se pudo graficar el modelo (quizás falta graphviz): {e}")
+    else:
+        print("ℹ️ SAVE_MODEL_DIAGRAM!=1. Saltando diagrama del modelo.")
 
         
 
@@ -137,6 +147,9 @@ def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=Non
 def visualize_results(model, val_ds, title):
     """Genera gráfica comparativa Input/Pred/Target y la guarda"""
     try:
+        if os.getenv("SAVE_VISUALIZATIONS", "1") != "1":
+            print("ℹ️ SAVE_VISUALIZATIONS!=1. Saltando visualización.")
+            return
 
         # Definir carpeta de destino
         # Usamos os.path.join para compatibilidad de rutas

@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # =============================================================
+  # Full-frame Ablation (Definitivo): UNet + LSTM + Transformer + Mamba
+  # =============================================================
+  tf-ablation:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tf
+    image: weather_thesis:tf
+    container_name: weather_tf_ablation_fullframe
+    volumes:
+      # Data y outputs se montan como volúmenes (no se empaquetan en la imagen)
+      - ./data:/app/data
+      - ./experiments:/app/experiments
+    environment:
+      - TF_USE_LEGACY_KERAS=1
+      - PYTHONUNBUFFERED=1
+      - MPLBACKEND=Agg
+      - CUDA_VISIBLE_DEVICES=0
+      # Config server + full-frame
+      - USE_GPU_CONFIG=1
+      - FULLFRAME=1
+      # Dejar por fuera imágenes (opcional; set a 1 si las necesitas)
+      - SAVE_MODEL_DIAGRAM=0
+      - SAVE_VISUALIZATIONS=0
+      - SAVE_COMPARATIVE_HISTORY=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: python scripts/run_ablation.py --models unet lstm transformer mamba --min-seq-len 6
+    restart: "no"
+

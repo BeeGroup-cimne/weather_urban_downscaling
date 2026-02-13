@@ -1,12 +1,12 @@
-import argparse
-import gc
 import os
-import sys
-import tensorflow.keras
 
 # Forzar compatibilidad con tf_keras (Keras 2) sobre TensorFlow 2.16+
-os.environ['TF_USE_LEGACY_KERAS'] = '1'
+# Debe establecerse ANTES de importar TensorFlow/Keras.
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
+import argparse
+import gc
+import sys
 
 import pandas as pd
 import tensorflow as tf
@@ -88,6 +88,11 @@ def main():
 
     print(f"\n🚀 INICIANDO ESTUDIO DE ABLACIÓN (Alineado con train.py)")
     print(f"   ⚡ Hardware: {Config.DEVICE}")
+
+    # "Full-frame" en este repo significa NO tiles (usar BigDataPipeline) y correr epochs completos.
+    # Permite forzar comportamiento en servidores CPU/GPU via env var.
+    if os.getenv("FULLFRAME", "0") == "1":
+        Config.MAX_STEPS_PER_EPOCH = None
     
     output_base_dir = Config.EXPERIMENTS_DIR
     os.makedirs(output_base_dir, exist_ok=True)

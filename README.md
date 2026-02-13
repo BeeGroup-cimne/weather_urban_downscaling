@@ -177,7 +177,7 @@ docker compose run tf-trainer
 
 ### 2. Ablation Study
 
-To compare multiple architectures (U-Net vs LSTM vs Mamba) under identical conditions:
+To compare multiple architectures under identical conditions (U-Net, UNet+LSTM, Transformer, UNet+Mamba):
 
 ```bash
 # Local:
@@ -185,6 +185,9 @@ python scripts/run_ablation.py
 
 # Docker:
 docker compose run tf-trainer python scripts/run_ablation.py
+
+# Server (GPU, full-frame, no figures by default):
+docker compose -f docker-compose.server-fullframe.yml up --build
 ```
 
 *   **Outputs**: Generates `experiments/ablation_summary.csv` and comparative plots.

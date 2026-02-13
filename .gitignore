@@ -1,5 +1,13 @@
 # Git ignore patterns
 
+# Images / figures
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.pdf
+
 # Data files (too large for git)
 *.nc
 *.grib
@@ -22,6 +30,7 @@ data/static/*
 experiments/models/*
 experiments/logs/*
 experiments/figures/*
+experiments/paper_figures/*
 !experiments/models/.gitkeep
 !experiments/logs/.gitkeep
 !experiments/figures/.gitkeep
@@ -63,3 +72,9 @@ Thumbs.db
 
 # IDX (Google Cloud IDE)
 .idx/
+
+# Non-production / WIP
+future_projects/
+
+# Local matplotlib config
+.mplconfig/
