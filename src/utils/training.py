@@ -101,16 +101,30 @@ def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=Non
 
         
 
+    # Callback knobs (configurable via Config overrides from scripts)
+    es_patience = int(getattr(Config, "EARLY_STOPPING_PATIENCE", 8))
+    es_min_delta = float(getattr(Config, "EARLY_STOPPING_MIN_DELTA", 0.0))
+    es_start_from_epoch = int(getattr(Config, "EARLY_STOPPING_START_EPOCH", 0))
+    lr_patience = int(getattr(Config, "LR_PATIENCE", 3))
+    lr_factor = float(getattr(Config, "LR_FACTOR", 0.5))
+    lr_min = float(getattr(Config, "LR_MIN", 1e-6))
+
     # Callbacks
     callbacks = [
         # Guardar solo el mejor modelo en la carpeta models/
         ModelCheckpoint(model_path, save_best_only=True, monitor='val_loss', verbose=1),
         
         # Detener si no mejora
-        EarlyStopping(patience=8, restore_best_weights=True, monitor='val_loss'),
+        EarlyStopping(
+            patience=es_patience,
+            min_delta=es_min_delta,
+            restore_best_weights=True,
+            monitor='val_loss',
+            start_from_epoch=es_start_from_epoch,
+        ),
         
         # Reducir Learning Rate
-        ReduceLROnPlateau(factor=0.5, patience=3, min_lr=1e-6),
+        ReduceLROnPlateau(factor=lr_factor, patience=lr_patience, min_lr=lr_min),
         
         # Guardar log CSV en la carpeta logs/
         CSVLogger(log_path)

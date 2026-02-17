@@ -16,10 +16,12 @@ class TileDataPipeline:
         self.cache_dir = self.cfg.PATH_CACHE
         self.static_cache_path = self.cfg.STATIC_CACHE_PATH
         self.static_norm = None
+        self.static_var_names = None
         self.weight_map = None
         self.weight_cdf = None
         self.time_weight = None
         self.time_cdf = None
+        self.time_series = None
         self.rng = np.random.default_rng(getattr(self.cfg, "SEED", 42))
 
     def _ensure_cache(self):
@@ -43,6 +45,14 @@ class TileDataPipeline:
         self.static_norm = (static - mean_st) / (std_st + 1e-6)
         if np.isnan(self.static_norm).any():
             self.static_norm = np.nan_to_num(self.static_norm, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Keep static var names in the same order used by BigDataPipeline.process_static_data()
+        # (it iterates ds_static.data_vars). We re-open the zarr to read that order.
+        try:
+            ds_static = xr.open_zarr(self.cfg.PATH_STATIC, consolidated=True)
+            self.static_var_names = [str(v) for v in ds_static.data_vars.keys()]
+        except Exception:
+            self.static_var_names = None
         return self.static_norm
 
     def _build_weight_map(self, sampler="static_weighted", hr_shape=None):
@@ -50,6 +60,45 @@ class TileDataPipeline:
             static = self.static_norm
             # Importance by mean absolute normalized static signal
             weight = np.mean(np.abs(static), axis=-1)
+        elif sampler == "uhi_proxy":
+            # Heatwave/UHI-oriented proxy:
+            # emphasize built-up / roughness, de-emphasize vegetation (cooling).
+            # Uses normalized static channels when names are available; otherwise falls back.
+            static = self.static_norm
+            names = self.static_var_names or []
+
+            def _idx(name: str):
+                try:
+                    return names.index(name)
+                except Exception:
+                    return None
+
+            idx_bd = _idx("building_density")
+            idx_ndvi = _idx("ndvi_mean")
+            idx_h = _idx("avg_height") if _idx("avg_height") is not None else _idx("height_index")
+            idx_r = _idx("roughness")
+            idx_svf = _idx("svf")
+
+            if idx_bd is None or idx_ndvi is None:
+                # Not enough info; default to generic static_weighted
+                weight = np.mean(np.abs(static), axis=-1)
+            else:
+                bd = static[:, :, idx_bd]
+                ndvi = static[:, :, idx_ndvi]
+                h = static[:, :, idx_h] if idx_h is not None else 0.0
+                r = static[:, :, idx_r] if idx_r is not None else 0.0
+                svf = static[:, :, idx_svf] if idx_svf is not None else 0.0
+
+                # Combine: built-up + height + roughness + (1-ndvi) + canyon-ness (1-svf)
+                # Use abs() on SVF/NDVI terms to keep weights non-negative even if normalized.
+                score = (
+                    0.45 * bd
+                    + 0.20 * h
+                    + 0.15 * r
+                    + 0.15 * np.abs(1.0 - ndvi)
+                    + 0.05 * np.abs(1.0 - svf)
+                )
+                weight = score
         elif sampler == "error_weighted":
             err_path = getattr(self.cfg, "TILE_ERROR_MAP_PATH", "")
             if not err_path or not os.path.exists(err_path):
@@ -73,7 +122,8 @@ class TileDataPipeline:
         return weight
 
     def _sample_patch_top_left(self, hr_h, hr_w, patch_h, patch_w, sampler="static_weighted"):
-        if sampler != "static_weighted" or self.weight_cdf is None:
+        weighted_samplers = ("static_weighted", "error_weighted", "uhi_proxy")
+        if sampler not in weighted_samplers or self.weight_cdf is None:
             y0 = self.rng.integers(0, max(1, hr_h - patch_h + 1))
             x0 = self.rng.integers(0, max(1, hr_w - patch_w + 1))
             return int(y0), int(x0)
@@ -92,8 +142,10 @@ class TileDataPipeline:
 
     def _build_time_weights(self, da_hr, time_dim):
         sampler = getattr(self.cfg, "TEMPORAL_SAMPLER", "uniform")
-        if sampler not in ("weighted", "weighted_station"):
-            self.time_cdf = None
+        self.time_weight = None
+        self.time_cdf = None
+        self.time_series = None
+        if sampler not in ("weighted", "weighted_station", "p95"):
             return None
 
         series = None
@@ -135,7 +187,10 @@ class TileDataPipeline:
         series = np.asarray(series, dtype=np.float32)
         if series.size == 0 or not np.isfinite(series).any():
             print("⚠️ Serie temporal inválida para pesos, fallback uniform.")
-            self.time_cdf = None
+            return None
+
+        if sampler == "p95":
+            self.time_series = np.nan_to_num(series, nan=0.0, posinf=0.0, neginf=0.0)
             return None
 
         grad = np.abs(np.diff(series, prepend=series[0]))
@@ -161,13 +216,24 @@ class TileDataPipeline:
         da_hr = ds["hr_target"]
 
         lr_time = next((d for d in da_lr.dims if d in ["time", "valid_time", "t"]), "time")
-        lr_lat = next((d for d in da_lr.dims if d in ["latitude", "lat", "y"]), "y")
-        lr_lon = next((d for d in da_lr.dims if d in ["longitude", "lon", "x"]), "x")
+        lr_lat = next(
+            (d for d in da_lr.dims if d in ["latitude_lr", "lat_lr", "y_lr", "latitude", "lat", "y"]),
+            "y",
+        )
+        lr_lon = next(
+            (d for d in da_lr.dims if d in ["longitude_lr", "lon_lr", "x_lr", "longitude", "lon", "x"]),
+            "x",
+        )
         lr_var = next((d for d in da_lr.dims if d in ["variable", "channel", "var"]), None)
 
         hr_time = next((d for d in da_hr.dims if d in ["time", "valid_time", "t"]), "time")
         hr_lat = next((d for d in da_hr.dims if d in ["latitude", "lat", "y"]), "y")
         hr_lon = next((d for d in da_hr.dims if d in ["longitude", "lon", "x"]), "x")
+
+        if lr_lat not in da_lr.sizes or lr_lon not in da_lr.sizes:
+            raise KeyError(f"LR dims no detectadas correctamente. dims={tuple(da_lr.dims)}")
+        if hr_lat not in da_hr.sizes or hr_lon not in da_hr.sizes:
+            raise KeyError(f"HR dims no detectadas correctamente. dims={tuple(da_hr.dims)}")
 
         hr_h = da_hr.sizes[hr_lat]
         hr_w = da_hr.sizes[hr_lon]
@@ -247,7 +313,7 @@ class TileDataPipeline:
 
         sampler = getattr(self.cfg, "TILE_SAMPLER", "static_weighted")
         mix_alpha = float(getattr(self.cfg, "TILE_WEIGHT_ALPHA", 0.85))
-        if sampler in ("static_weighted", "error_weighted"):
+        if sampler in ("static_weighted", "error_weighted", "uhi_proxy"):
             self._build_weight_map(sampler=sampler, hr_shape=(hr_h, hr_w))
         else:
             self.weight_cdf = None
@@ -269,10 +335,10 @@ class TileDataPipeline:
         seasons = _season_index(times_pd)
 
         def _sample_top_left():
-            if sampler == "static_weighted" and self.weight_cdf is not None:
-                # Mix uniform and weighted
+            if self.weight_cdf is not None and sampler in ("static_weighted", "error_weighted", "uhi_proxy"):
+                # Mix uniform and weighted sampling to avoid overfitting to a narrow spatial subset.
                 if self.rng.random() < mix_alpha:
-                    return self._sample_patch_top_left(hr_h, hr_w, patch_h, patch_w, sampler="static_weighted")
+                    return self._sample_patch_top_left(hr_h, hr_w, patch_h, patch_w, sampler=sampler)
             return self._sample_patch_top_left(hr_h, hr_w, patch_h, patch_w, sampler="uniform")
 
         def _sample_time(start_i, end_i):
@@ -295,6 +361,16 @@ class TileDataPipeline:
 
             if self.time_cdf is not None:
                 weights = self.time_weight[candidates]
+                weights = weights / np.sum(weights)
+                return int(self.rng.choice(candidates, p=weights))
+
+            if sampler == "p95" and self.time_series is not None:
+                values = self.time_series[candidates]
+                q = float(np.nanquantile(values, 0.95))
+                weights = np.maximum(values - q, 0.0)
+                weights = np.nan_to_num(weights, nan=0.0, posinf=0.0, neginf=0.0)
+                min_prob = float(getattr(self.cfg, "TEMPORAL_MIN_PROB", 1e-6))
+                weights = weights + min_prob
                 weights = weights / np.sum(weights)
                 return int(self.rng.choice(candidates, p=weights))
 
@@ -357,6 +433,8 @@ class TileDataPipeline:
         val_samples = int(getattr(self.cfg, "VAL_PATCHES_PER_EPOCH", max(1, train_samples // 10)))
 
         prefetch_buf = getattr(self.cfg, "PREFETCH_BUFFER_SIZE", 2)
+        if prefetch_buf in (-1, 0, "auto", "AUTOTUNE"):
+            prefetch_buf = tf.data.AUTOTUNE
         train_ds = tf.data.Dataset.from_generator(
             lambda: generator(train_start, train_end, train_samples),
             output_signature=((spec_lr, spec_st), spec_hr)

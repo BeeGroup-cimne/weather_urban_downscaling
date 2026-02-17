@@ -40,6 +40,8 @@ def build_model(model_type: str):
         return ModelZoo.build_hybrid_unet_mamba(lr_shape=Config.LR_SHAPE, hr_shape=Config.HR_SHAPE)
     if model_type == "convlstm":
         return ModelZoo.build_hybrid_unet_lstm()
+    if model_type == "transformer":
+        return ModelZoo.build_transformer()
     return ModelZoo.build_unet()
 
 
@@ -60,9 +62,25 @@ def _find_time_index(times, time_value):
     return int(idx)
 
 
+def _resolve_lr_channel(da_lr, lr_var_dim, requested_channel):
+    if requested_channel is not None and int(requested_channel) >= 0:
+        return int(requested_channel), f"ch={int(requested_channel)}"
+
+    # Auto-select t2m when variable coordinate exists
+    if lr_var_dim and lr_var_dim in da_lr.coords:
+        try:
+            names = [str(v) for v in da_lr.coords[lr_var_dim].values.tolist()]
+            if "t2m" in names:
+                idx = names.index("t2m")
+                return idx, "t2m"
+        except Exception:
+            pass
+    return 0, "ch=0"
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm"])
+    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm", "transformer"])
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--patch-size", type=int, default=96)
     parser.add_argument("--stride", type=int, default=48, help="stride for sliding window (in HR pixels)")
@@ -71,7 +89,13 @@ def main():
     parser.add_argument("--time", type=str, default=None, help="timestamp, e.g. 2017-06-15T12:00:00")
     parser.add_argument("--temporal-stride", type=int, default=None, help="override temporal stride")
     parser.add_argument("--use-last", action="store_true", help="use last timestep of sequence for output")
-    parser.add_argument("--lr-channel", type=int, default=0, help="LR channel index for visualization")
+    parser.add_argument("--lr-channel", type=int, default=None, help="LR channel index for visualization (-1/omit=auto t2m)")
+    parser.add_argument(
+        "--lr-resample",
+        default="nearest",
+        choices=["nearest", "bilinear"],
+        help="Resampling mode for LR panel (nearest keeps pixelated look).",
+    )
     parser.add_argument("--experiment-name", default=None, help="label used in outputs and titles")
     parser.add_argument("--temp-cmap", default="inferno", help="Colormap for temperature-like fields")
     parser.add_argument("--error-cmap", default="magma", help="Colormap for absolute error panel")
@@ -251,10 +275,10 @@ def main():
     # Plot comparison (LR upsampled vs Pred vs HR)
     hr_last = hr_full[-1, :, :, 0]
     lr_last = lr_full[-1, :, :, :]
-    lr_ch = int(args.lr_channel)
+    lr_ch, lr_label = _resolve_lr_channel(da_lr, lr_var, args.lr_channel)
     lr_ch = max(0, min(lr_ch, lr_last.shape[-1] - 1))
     lr_img = lr_last[:, :, lr_ch]
-    lr_up = tf.image.resize(lr_img[..., None], (hr_h, hr_w), method="bilinear").numpy()[..., 0]
+    lr_up = tf.image.resize(lr_img[..., None], (hr_h, hr_w), method=args.lr_resample).numpy()[..., 0]
     abs_err = np.abs(full_pred - hr_last)
 
     vmin, vmax = robust_limits(
@@ -267,12 +291,12 @@ def main():
     _, err_vmax = robust_limits([abs_err], pct_low=0.0, pct_high=99.0, hard_min=0.0, hard_max=None)
 
     panels = [
-        (lr_up, f"LR (upsampled) ch={lr_ch}", args.temp_cmap, vmin, vmax),
-        (full_pred, "Prediction (tiles->full)", args.temp_cmap, vmin, vmax),
-        (hr_last, "HR Ground Truth", args.temp_cmap, vmin, vmax),
+        (lr_up, f"LR ({lr_label}, {args.lr_resample})", args.temp_cmap, vmin, vmax, "nearest"),
+        (full_pred, "Prediction (tiles->full)", args.temp_cmap, vmin, vmax, "none"),
+        (hr_last, "HR Ground Truth", args.temp_cmap, vmin, vmax, "none"),
     ]
     if args.show_error:
-        panels.append((abs_err, "Abs Error", args.error_cmap, 0.0, err_vmax))
+        panels.append((abs_err, "Abs Error", args.error_cmap, 0.0, err_vmax, "none"))
 
     lat2d, lon2d = extract_lat_lon_2d_from_da(da_hr)
     use_geo = False
@@ -304,7 +328,7 @@ def main():
     if n_panels == 1:
         axes = [axes]
 
-    for ax, (data, title, cmap, pmin, pmax) in zip(axes, panels):
+    for ax, (data, title, cmap, pmin, pmax, interp) in zip(axes, panels):
         if use_geo:
             im = ax.pcolormesh(
                 lon2d,
@@ -319,7 +343,7 @@ def main():
             ax.coastlines(resolution=args.coastline_resolution, linewidth=0.6, color="black")
             ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
         else:
-            im = ax.imshow(data, cmap=cmap, origin="lower", vmin=pmin, vmax=pmax)
+            im = ax.imshow(data, cmap=cmap, origin="lower", vmin=pmin, vmax=pmax, interpolation=interp)
             ax.axis("off")
         ax.set_title(title)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
