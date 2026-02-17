@@ -1,6 +1,16 @@
-# Git ignore patterns
+# =============================================================
+# Git ignore — Weather Urban Downscaling (Server-Ready)
+# =============================================================
 
-# Data files (too large for git)
+# ----- Images / figures -----
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.pdf
+
+# ----- Data files (too large for git) -----
 *.nc
 *.grib
 *.zarr/
@@ -10,23 +20,57 @@
 *.keras
 *.geojson
 
-# Data directories
+# ----- Data directories -----
 data/raw/*
 data/processed/*
 data/static/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/processed/era5land/.gitkeep
+!data/static/.gitkeep
 
-# Experiment outputs (can be regenerated)
+# ----- Experiment outputs (regenerable) -----
+experiments/*.csv
+experiments/*.json
 experiments/models/*
 experiments/logs/*
 experiments/figures/*
+experiments/paper_figures/*
+experiments/ab_compare/*
+experiments/tf/*
+experiments/torch/*
 !experiments/models/.gitkeep
 !experiments/logs/.gitkeep
 !experiments/figures/.gitkeep
 
-# Python
+# ----- Archive / legacy (not needed on server) -----
+archive/
+
+# ----- Cache / temp -----
+processed_cache_zarr/
+src/utils/cache/
+.tmp_mpl/
+.mplconfig/
+
+# ----- Non-production / WIP -----
+future_projects/
+reports/
+
+# ----- Root-level files not needed on server -----
+cronograma_tesis_final.png
+generar_cronograma.py
+check_architecture.py
+ablation_results.md
+train.py
+
+# ----- Redundant requirements (only requirements_tf.txt is needed) -----
+requirements.txt
+requirements_mac.txt
+requirements_mamba.txt
+requirements_torch.txt
+environment_torch.yml
+
+# ----- Python -----
 __pycache__/
 *.pyc
 *.pyo
@@ -37,29 +81,37 @@ dist/
 build/
 .eggs/
 
-# Virtual environments
+# ----- Virtual environments -----
 .venv/
 venv/
 ENV/
 env/
 
-# IDE
+# ----- IDE -----
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# OS
+# ----- OS -----
 .DS_Store
 Thumbs.db
 
-# Jupyter
+# ----- Jupyter -----
 .ipynb_checkpoints/
 
-# Misc
+# ----- Misc -----
 *.log
 *.tmp
 *.bak
 
-# IDX (Google Cloud IDE)
+# ----- IDX (Google Cloud IDE) -----
 .idx/
+
+# ----- Scripts not needed for server (figure generators, etc.) -----
+scripts/generate_latex_architecture_gallery.py
+scripts/generate_paper_architecture_figures.py
+scripts/generate_paper_block_diagrams.py
+scripts/generate_paper_figure3_like.py
+scripts/generate_paper_flow_figures.py
+scripts/generate_paper_figures.py

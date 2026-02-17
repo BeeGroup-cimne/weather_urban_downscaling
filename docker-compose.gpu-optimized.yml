@@ -11,6 +11,7 @@ services:
     image: weather_thesis:tf
     container_name: weather_tf_trainer
     volumes:
+      - ./:/app
       # Mount data directory (must contain your datasets)
       - ./data:/app/data
       # Mount experiments to persist outputs
@@ -21,6 +22,7 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - TF_GPU_ALLOCATOR=cuda_malloc_async
       - MPLCONFIGDIR=/tmp
+      - USE_GPU_CONFIG=1
     # GPU support con límites de memoria
     deploy:
       resources:
@@ -36,15 +38,12 @@ services:
     shm_size: '8gb'
     # Command con configuración optimizada
     command: >
-      python -c "
-      import sys;
-      sys.path.append('/app');
+      python -c "import sys; sys.path.append('/app');
       from config.gpu_server_config import GPUServerConfig;
       GPUServerConfig.print_memory_info();
       from src.optimized_data_pipeline import OptimizedBigDataPipeline;
       from scripts.gpu_server_train import train_gpu_optimized;
-      train_gpu_optimized()
-      "
+      train_gpu_optimized()"
     restart: "no"
     profiles:
       - training
@@ -68,6 +67,7 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - TF_GPU_ALLOCATOR=cuda_malloc_async
       - MPLCONFIGDIR=/tmp
+      - USE_GPU_CONFIG=1
     deploy:
       resources:
         limits:
@@ -103,6 +103,7 @@ services:
       - MPLCONFIGDIR=/tmp
       - CUDA_VISIBLE_DEVICES=0
       - NCCL_DEBUG=WARN
+      - USE_GPU_CONFIG=1
     deploy:
       resources:
         limits:
@@ -131,36 +132,20 @@ services:
     image: weather_thesis:tf
     container_name: weather_data_prep
     volumes:
+      - ./:/app
       - ./data:/app/data
       - ./experiments:/app/experiments
     environment:
       - PYTHONUNBUFFERED=1
+      - MPLCONFIGDIR=/tmp
+      - USE_GPU_CONFIG=1
     deploy:
       resources:
         limits:
           memory: 16G
           cpus: '4'
     command: >
-      python -c "
-      import sys;
-      sys.path.append('/app');
-      from config.gpu_server_config import GPUServerConfig;
-      from src.optimized_data_pipeline import OptimizedBigDataPipeline;
-      
-      print('🚀 Iniciando data preprocessing optimizado...');
-      GPUServerConfig.print_memory_info();
-      
-      # Procesar datos estáticos
-      pipeline = OptimizedBigDataPipeline(GPUServerConfig);
-      pipeline.process_static_data();
-      
-      # Procesar datos temporales
-      from src.data_loader import BigDataPipeline;
-      original_pipeline = BigDataPipeline(GPUServerConfig);
-      original_pipeline.run_etl_process();
-      
-      print('✅ Data preprocessing complete!');
-      "
+      python -c "import sys; sys.path.append('/app'); from config.gpu_server_config import GPUServerConfig; from src.optimized_data_pipeline import OptimizedBigDataPipeline; print('🚀 Iniciando data preprocessing optimizado...'); GPUServerConfig.print_memory_info(); pipeline = OptimizedBigDataPipeline(GPUServerConfig); pipeline.process_static_data(); from src.data_loader import BigDataPipeline; original_pipeline = BigDataPipeline(GPUServerConfig); original_pipeline.run_etl_process(); print('✅ Data preprocessing complete!');"
     restart: "no"
     profiles:
       - preprocessing

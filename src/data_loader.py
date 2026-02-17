@@ -10,6 +10,7 @@ import dask.array as da
 from dask.diagnostics import ProgressBar
 from scipy.interpolate import NearestNDInterpolator
 import os
+import pandas as pd
 from config.config import Config
 
 
@@ -33,40 +34,104 @@ class BigDataPipeline:
         # Definimos ruta del caché estático
         static_cache_path = self.cfg.STATIC_CACHE_PATH
 
-        if os.path.exists(static_cache_path):
+        # Si ya existe cache Zarr, preferimos su grilla HR (es la que usa el entrenamiento)
+        cache_hr = None
+        if os.path.exists(self.cache_dir):
+            try:
+                z = xr.open_zarr(self.cache_dir, consolidated=True)
+                if "hr_target" in z:
+                    cache_hr = z["hr_target"]
+            except Exception:
+                cache_hr = None
+
+        # --- FIX: DETECCIÓN ROBUSTA DE DIMENSIONES ---
+        # Intentar obtener dimensiones desde el cache primero (sin abrir PATH_HR)
+        dim_y = dim_x = None
+        if cache_hr is not None and 'latitude' in cache_hr.coords and 'longitude' in cache_hr.coords:
+            lat_c = cache_hr['latitude'].values
+            lon_c = cache_hr['longitude'].values
+            if getattr(lat_c, 'ndim', 1) == 1 and getattr(lon_c, 'ndim', 1) == 1:
+                dim_y, dim_x = lat_c.shape[0], lon_c.shape[0]
+            else:
+                dim_y, dim_x = lat_c.shape
+        elif cache_hr is not None and 'y' in cache_hr.sizes and 'x' in cache_hr.sizes:
+            dim_y = cache_hr.sizes['y']
+            dim_x = cache_hr.sizes['x']
+
+        # Si el cache estático ya coincide, salir temprano sin abrir PATH_HR
+        if dim_y is not None and dim_x is not None and os.path.exists(static_cache_path):
             print("🗺️ Cargando datos estáticos desde caché (.npy)...")
-            self.ds_static_single = np.load(static_cache_path)
-            print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
-            return
+            cached = np.load(static_cache_path)
+            if cached.shape[0] == dim_y and cached.shape[1] == dim_x:
+                self.ds_static_single = cached
+                print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
+                return
+            print(f"   ⚠️ Cache estático desalineado {cached.shape[:2]} != ({dim_y}, {dim_x}). Recalculando...")
 
         print("🗺️ Procesando e Interpolando datos estáticos (Esto se hará solo una vez)...")
         
         # 1. Abrimos el dataset HR para leer dimensiones y grilla
         # Usamos open_dataset normal para asegurar acceso a todas las variables
-        ds_hr = xr.open_dataset(self.cfg.PATH_HR)
-        
+        ds_hr = None
+        try:
+            ds_hr = xr.open_dataset(self.cfg.PATH_HR)
+        except Exception as e:
+            if cache_hr is None:
+                raise
+            print(f"⚠️ No se pudo abrir PATH_HR ({self.cfg.PATH_HR}). Usando grilla del cache. Error: {e}")
+
         # --- FIX: DETECCIÓN ROBUSTA DE DIMENSIONES ---
-        # UrbClim usa 'y' y 'x' como dimensiones, no 'latitude'/'longitude'
-        if 'y' in ds_hr.sizes and 'x' in ds_hr.sizes:
+        # Preferir tamaño real del grid lat/lon (si existe y es 2D)
+        if cache_hr is not None and 'latitude' in cache_hr.coords and 'longitude' in cache_hr.coords:
+            lat_c = cache_hr['latitude'].values
+            lon_c = cache_hr['longitude'].values
+            if getattr(lat_c, 'ndim', 1) == 1 and getattr(lon_c, 'ndim', 1) == 1:
+                dim_y, dim_x = lat_c.shape[0], lon_c.shape[0]
+            else:
+                dim_y, dim_x = lat_c.shape
+        elif ds_hr is not None and 'latitude' in ds_hr.coords and hasattr(ds_hr['latitude'], 'ndim') and ds_hr['latitude'].ndim == 2:
+            dim_y, dim_x = ds_hr['latitude'].shape
+        elif ds_hr is not None and 'y' in ds_hr.sizes and 'x' in ds_hr.sizes:
             dim_y = ds_hr.sizes['y']
             dim_x = ds_hr.sizes['x']
-        elif 'latitude' in ds_hr.sizes:
+        elif ds_hr is not None and 'latitude' in ds_hr.sizes:
             dim_y = ds_hr.sizes['latitude']
             dim_x = ds_hr.sizes['longitude']
         else:
             # Fallback por si acaso
+            if ds_hr is None:
+                raise RuntimeError("❌ No se pudo determinar la grilla HR (cache y PATH_HR no disponibles).")
             dim_y, dim_x = ds_hr.shape[-2], ds_hr.shape[-1]
             
         print(f" 📏 Dimensiones detectadas HR: {dim_y}x{dim_x}")
 
+        if os.path.exists(static_cache_path):
+            print("🗺️ Cargando datos estáticos desde caché (.npy)...")
+            cached = np.load(static_cache_path)
+            if cached.shape[0] == dim_y and cached.shape[1] == dim_x:
+                self.ds_static_single = cached
+                print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
+                return
+            print(f"   ⚠️ Cache estático desalineado {cached.shape[:2]} != ({dim_y}, {dim_x}). Recalculando...")
+
         # --- GRID PARA INTERPOLACIÓN ---
         # Necesitamos los valores reales de latitud/longitud de cada pixel para saber dónde interpolar
         # Aunque las dimensiones se llamen 'y'/'x', las variables 'latitude'/'longitude' existen
-        grid_y = ds_hr['latitude'].values
-        grid_x = ds_hr['longitude'].values
+        if cache_hr is not None and 'latitude' in cache_hr.coords and 'longitude' in cache_hr.coords:
+            grid_y = cache_hr['latitude'].values
+            grid_x = cache_hr['longitude'].values
+        else:
+            if ds_hr is None:
+                raise RuntimeError("❌ No se pudo leer latitude/longitude para interpolación.")
+            grid_y = ds_hr['latitude'].values
+            grid_x = ds_hr['longitude'].values
         
         # Aplanar para interpolar
-        target_points = np.column_stack((grid_y.ravel(), grid_x.ravel()))
+        if getattr(grid_y, 'ndim', 1) == 1 and getattr(grid_x, 'ndim', 1) == 1:
+            yy, xx = np.meshgrid(grid_y, grid_x, indexing='ij')
+            target_points = np.column_stack((yy.ravel(), xx.ravel()))
+        else:
+            target_points = np.column_stack((grid_y.ravel(), grid_x.ravel()))
         
         # 2. Cargar Static Zarr (tus datos de elevación/landuse)
         ds_static = xr.open_zarr(self.cfg.PATH_STATIC)
@@ -87,6 +152,13 @@ class BigDataPipeline:
             static_layers.append(interp_flat.reshape(dim_y, dim_x))
             
         self.ds_static_single = np.stack(static_layers, axis=-1).astype('float32')
+        if np.isnan(self.ds_static_single).any():
+            print("⚠️ Static data contiene NaNs. Rellenando con media por canal.")
+            ch_mean = np.nanmean(self.ds_static_single, axis=(0, 1), keepdims=True)
+            self.ds_static_single = np.where(
+                np.isnan(self.ds_static_single), ch_mean, self.ds_static_single
+            )
+            self.ds_static_single = np.nan_to_num(self.ds_static_single, nan=0.0, posinf=0.0, neginf=0.0)
         print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
 
         print(f"💾 Guardando caché estático en {static_cache_path}...")
@@ -123,9 +195,9 @@ class BigDataPipeline:
             try:
                 ds_zarr = xr.open_zarr(self.cache_dir)
                 # Intentamos leer dimensiones estándar, fallback a nombres detectados
-                lat_dim = next((d for d in ds_zarr.dims if d in ['latitude', 'lat', 'y']), 'latitude')
-                lon_dim = next((d for d in ds_zarr.dims if d in ['longitude', 'lon', 'x']), 'longitude')
-                self.cfg.LR_SHAPE = (ds_zarr.dims[lat_dim], ds_zarr.dims[lon_dim])
+                lat_dim = next((d for d in ds_zarr.sizes if d in ['latitude', 'lat', 'y']), 'latitude')
+                lon_dim = next((d for d in ds_zarr.sizes if d in ['longitude', 'lon', 'x']), 'longitude')
+                self.cfg.LR_SHAPE = (ds_zarr.sizes[lat_dim], ds_zarr.sizes[lon_dim])
                 return
             except:
                 shutil.rmtree(self.cache_dir)
@@ -133,7 +205,23 @@ class BigDataPipeline:
         print("🚀 Iniciando ETL Multi-Canal...")
         
         # 1. Carga Lazy
-        ds_hr = xr.open_mfdataset(self.cfg.PATH_HR, chunks={'time': 100}, parallel=True)
+        # HDF5 file locking can cause intermittent "NetCDF: HDF error" inside containers
+        os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
+
+        def _open_hr_dataset(path):
+            if os.path.isfile(path):
+                try:
+                    return xr.open_dataset(path, chunks={'time': 100})
+                except Exception as e:
+                    print(f"⚠️ HR open_dataset failed ({e}). Reintentando con engine='h5netcdf'...")
+                    return xr.open_dataset(path, engine="h5netcdf", chunks={'time': 100})
+            try:
+                return xr.open_mfdataset(path, chunks={'time': 100}, parallel=True)
+            except Exception as e:
+                print(f"⚠️ HR open_mfdataset failed ({e}). Reintentando con engine='h5netcdf' y parallel=False...")
+                return xr.open_mfdataset(path, engine="h5netcdf", chunks={'time': 100}, parallel=False)
+
+        ds_hr = _open_hr_dataset(self.cfg.PATH_HR)
         # LR puede ser un archivo único o un patrón con múltiples GRIB
         lr_path = self.cfg.PATH_LR
         cfgrib_kwargs = {
@@ -230,7 +318,7 @@ class BigDataPipeline:
             times_hr_pd = pd.to_datetime(times_hr_raw)
         
         # Reducir a precisión horaria (elimina microsegundos, ns)
-        times_hr_normalized = times_hr_pd.floor('H')
+        times_hr_normalized = times_hr_pd.floor('h')
         
         # Normalizar LR
         times_lr_raw = ds_lr.time.values
@@ -239,7 +327,7 @@ class BigDataPipeline:
         else:
             times_lr_pd = pd.to_datetime(times_lr_raw)
         
-        times_lr_normalized = times_lr_pd.floor('H')
+        times_lr_normalized = times_lr_pd.floor('h')
         
         print(f"   ✅ Tiempos normalizados (Precisión horaria)")
         print(f"      HR: {times_hr_normalized.min()} -> {times_hr_normalized.max()}")
@@ -258,13 +346,49 @@ class BigDataPipeline:
             print(f"      LR disponible: {len(times_lr_normalized)} timesteps")
             raise ValueError("❌ Sin coincidencia temporal. Verifica que los datasets cubran el mismo período.")
         
+        # Log dropped timesteps for transparency
+        n_hr_dropped = len(times_hr_normalized) - len(common_times)
+        n_lr_dropped = len(times_lr_normalized) - len(common_times)
         print(f"   ✅ Intersección exitosa: {len(common_times)} timesteps comunes")
+        if n_hr_dropped > 0:
+            print(f"   ⚠️ {n_hr_dropped} timesteps HR descartados (sin match en LR)")
+        if n_lr_dropped > 0:
+            print(f"   ⚠️ {n_lr_dropped} timesteps LR descartados (sin match en HR)")
         ds_hr = ds_hr.sel(time=common_times)
         ds_lr = ds_lr.sel(time=common_times)
 
+        # 6. Normalizar coordenadas HR a lat/lon 1D (si es posible)
+        hr_lat_dim = 'latitude' if 'latitude' in ds_hr.dims else 'y'
+        hr_lon_dim = 'longitude' if 'longitude' in ds_hr.dims else 'x'
+
+        if hr_lat_dim == 'y' and 'latitude' in ds_hr.coords and 'longitude' in ds_hr.coords:
+            lat = ds_hr['latitude']
+            lon = ds_hr['longitude']
+            if lat.ndim == 2 and lon.ndim == 2:
+                lat1d = lat[:, 0]
+                lon1d = lon[0, :]
+                try:
+                    is_rect_lat = np.allclose(lat.values, lat1d.values[:, None], atol=1e-6)
+                    is_rect_lon = np.allclose(lon.values, lon1d.values[None, :], atol=1e-6)
+                except Exception:
+                    is_rect_lat = is_rect_lon = False
+
+                if is_rect_lat and is_rect_lon:
+                    print("✅ HR: lat/lon 2D rectilíneo detectado. Convirtiendo a 1D.")
+                    ds_hr = ds_hr.rename({'latitude': 'latitude_2d', 'longitude': 'longitude_2d'})
+                    ds_hr = ds_hr.assign_coords(latitude=('y', lat1d.values),
+                                                longitude=('x', lon1d.values))
+                    ds_hr = ds_hr.swap_dims({'y': 'latitude', 'x': 'longitude'})
+                    hr_lat_dim = 'latitude'
+                    hr_lon_dim = 'longitude'
+                else:
+                    print("⚠️ HR lat/lon 2D no es rectilíneo. Se mantiene y/x.")
+            else:
+                print("ℹ️ HR ya contiene lat/lon 1D o no-2D; se mantiene.")
+
         # 6. Recorte y Tensores
-        hr_lat_coord = 'latitude' if 'latitude' in ds_hr.coords else 'y'
-        hr_lon_coord = 'longitude' if 'longitude' in ds_hr.coords else 'x'
+        hr_lat_coord = hr_lat_dim if hr_lat_dim in ds_hr.coords else 'y'
+        hr_lon_coord = hr_lon_dim if hr_lon_dim in ds_hr.coords else 'x'
         
         min_lat = ds_hr[hr_lat_coord].min().compute().item()
         max_lat = ds_hr[hr_lat_coord].max().compute().item()
@@ -302,41 +426,119 @@ class BigDataPipeline:
         # 2. Relleno Latitudinal (Norte-Sur) - Para esquinas rebeldes
         ds_lr_clean = ds_lr_clean.interpolate_na(dim='latitude', method='nearest', fill_value="extrapolate")
         
-        # 3. Fallback Temporal (Por si queda algún hueco raro)
-        ds_lr_clean = ds_lr_clean.ffill(dim='time').bfill(dim='time')
+        # 3. Fallback Temporal (evita dependencia de bottleneck en contenedores)
+        # For interpolate_na over a core dimension with dask='parallelized',
+        # xarray may require a single chunk along that dimension.
+        try:
+            ds_lr_clean = ds_lr_clean.chunk({'time': -1}).interpolate_na(
+                dim='time', method='nearest', fill_value="extrapolate"
+            )
+        except Exception as e:
+            print(f"   ⚠️ Temporal interpolate_na failed ({e}); will use mean-fill fallback if needed.")
         # -----------------------------------------------
         
-        # HR Clean
-        hr_lat_dim = 'latitude' if 'latitude' in ds_hr.dims else 'y'
-        hr_lon_dim = 'longitude' if 'longitude' in ds_hr.dims else 'x'
-        ds_hr_clean = ds_hr["tas_C"].ffill(dim=hr_lon_dim).bfill(dim=hr_lon_dim) \
-                                    .ffill(dim=hr_lat_dim).bfill(dim=hr_lat_dim)
+        # HR Clean (nearest/extrapolate para evitar ffill/bfill -> bottleneck)
+        ds_hr_clean = ds_hr["tas_C"].interpolate_na(
+            dim=hr_lon_dim, method='nearest', fill_value="extrapolate"
+        ).interpolate_na(
+            dim=hr_lat_dim, method='nearest', fill_value="extrapolate"
+        )
+
+        # Rellenar NaNs restantes (LR y HR) si existen
+        try:
+            lr_has_nan = bool(ds_lr_clean.isnull().any().compute().item())
+        except Exception:
+            lr_has_nan = True
+        if lr_has_nan:
+            print("⚠️ LR aún contiene NaNs. Rellenando con media por variable...")
+            mean_lr_fill = ds_lr_clean.mean(dim=['time', 'latitude', 'longitude'], skipna=True)
+            ds_lr_clean = ds_lr_clean.fillna(mean_lr_fill)
+
+        try:
+            hr_has_nan = bool(ds_hr_clean.isnull().any().compute().item())
+        except Exception:
+            hr_has_nan = True
+        if hr_has_nan:
+            print("⚠️ HR aún contiene NaNs. Rellenando con media global...")
+            mean_hr_fill = ds_hr_clean.mean(skipna=True)
+            ds_hr_clean = ds_hr_clean.fillna(mean_hr_fill)
 
         # 7. Stats Vectoriales
         print("   🧮 Calculando estadísticas...")
+        ds_lr_stats = ds_lr_clean
+        ds_hr_stats = ds_hr_clean
+        if getattr(self.cfg, "STATS_TRAIN_ONLY", False) and getattr(self.cfg, "SPLIT_MODE", "") == "time":
+            try:
+                start = pd.to_datetime(self.cfg.TRAIN_START)
+                end = pd.to_datetime(self.cfg.TRAIN_END)
+                if "time" in ds_lr_stats.dims:
+                    ds_lr_stats = ds_lr_stats.sel(time=slice(start, end))
+                if "time" in ds_hr_stats.dims:
+                    ds_hr_stats = ds_hr_stats.sel(time=slice(start, end))
+                print(f"   🧪 Stats TRAIN-only: {self.cfg.TRAIN_START} -> {self.cfg.TRAIN_END}")
+            except Exception as e:
+                print(f"   ⚠️ No se pudo filtrar stats por TRAIN: {e}")
         with ProgressBar():
             # Especificamos dims explícitas para asegurar promedio correcto
-            mean_lr = ds_lr_clean.mean(dim=['time', 'latitude', 'longitude']).compute()
-            std_lr = ds_lr_clean.std(dim=['time', 'latitude', 'longitude']).compute()
-            mean_hr = ds_hr_clean.mean().compute().item()
-            std_hr = ds_hr_clean.std().compute().item()
+            mean_lr = ds_lr_stats.mean(dim=['time', 'latitude', 'longitude']).compute()
+            std_lr = ds_lr_stats.std(dim=['time', 'latitude', 'longitude']).compute()
+            mean_hr = ds_hr_stats.mean().compute().item()
+            std_hr = ds_hr_stats.std().compute().item()
         
+        # --- Normalization sanity check + robust std floor ---
+        std_threshold = float(getattr(self.cfg, "NORM_NEAR_ZERO_STD_THRESHOLD", 0.01))
+        std_floor = float(getattr(self.cfg, "NORM_STD_FLOOR", std_threshold))
+        std_floor = max(std_floor, std_threshold)
+
+        std_lr_vals = std_lr.values if hasattr(std_lr, 'values') else np.atleast_1d(std_lr)
+        near_zero_mask = std_lr_vals < std_threshold
+        lr_var_names = [f"var_{i}" for i in range(len(std_lr_vals))]
+        if hasattr(ds_lr_stats, "coords") and "variable" in ds_lr_stats.coords:
+            lr_var_names = [str(v) for v in ds_lr_stats["variable"].values.tolist()]
+        if np.any(near_zero_mask):
+            bad_idx = list(np.where(near_zero_mask)[0])
+            bad_vals = [float(std_lr_vals[i]) for i in bad_idx]
+            bad_names = [lr_var_names[i] if i < len(lr_var_names) else f"var_{i}" for i in bad_idx]
+            print(f"   ⚠️ NORMALIZATION WARNING: {len(bad_idx)} LR variable(s) with std < {std_threshold}")
+            print(f"      Indices: {bad_idx}, Names: {bad_names}, Values: {bad_vals}")
+            print("      These channels are near-constant and unstable for raw Z-score.")
+
+        std_lr_safe_vals = np.maximum(std_lr_vals, std_floor)
+        lr_floor_applied_idx = list(np.where(std_lr_safe_vals > std_lr_vals)[0])
+        if lr_floor_applied_idx:
+            lr_floor_names = [lr_var_names[i] if i < len(lr_var_names) else f"var_{i}" for i in lr_floor_applied_idx]
+            print(f"   🛡️ Applied std floor={std_floor} to {len(lr_floor_applied_idx)} LR variable(s)")
+            print(f"      Indices: {lr_floor_applied_idx}, Names: {lr_floor_names}")
+        std_lr_safe = xr.DataArray(std_lr_safe_vals, dims=std_lr.dims, coords=std_lr.coords)
+
+        if std_hr < std_threshold:
+            print(f"   ⚠️ NORMALIZATION WARNING: HR std = {std_hr:.6f} (near-zero)")
+        std_hr_safe = max(float(std_hr), std_floor)
+        if std_hr_safe > std_hr:
+            print(f"   🛡️ Applied std floor={std_floor} to HR std ({std_hr:.6f} -> {std_hr_safe:.6f})")
+
         # Guardar estadísticas para visualizaciones
         try:
             os.makedirs(os.path.dirname(self.stats_path), exist_ok=True)
             np.savez(
                 self.stats_path,
                 mean_lr=mean_lr.values,
-                std_lr=std_lr.values,
+                std_lr=std_lr_safe.values,
+                std_lr_raw=std_lr.values,
                 mean_hr=mean_hr,
-                std_hr=std_hr
+                std_hr=std_hr_safe,
+                std_hr_raw=std_hr,
+                lr_var_names=np.asarray(lr_var_names, dtype=str),
+                norm_std_threshold=std_threshold,
+                norm_std_floor=std_floor,
+                lr_std_floor_applied_idx=np.asarray(lr_floor_applied_idx, dtype=np.int32),
             )
             print(f"   💾 Stats guardadas en: {self.stats_path}")
         except Exception as e:
             print(f"   ⚠️ No se pudieron guardar stats: {e}")
 
-        ds_lr_norm = (ds_lr_clean - mean_lr) / (std_lr + 1e-6)
-        ds_hr_norm = (ds_hr_clean - mean_hr) / (std_hr + 1e-6)
+        ds_lr_norm = (ds_lr_clean - mean_lr) / (std_lr_safe + 1e-6)
+        ds_hr_norm = (ds_hr_clean - mean_hr) / (std_hr_safe + 1e-6)
         
         # --- 🔄 FIX ROTACIÓN: TRANSPOSICIÓN ANTES DE GUARDAR 🔄 ---
         # Aseguramos el orden canónico para Tensorflow: (Time, Lat, Lon, Variable)
@@ -347,22 +549,64 @@ class BigDataPipeline:
         # Para HR: (Time, Lat, Lon)
         ds_hr_norm = ds_hr_norm.transpose('time', hr_lat_dim, hr_lon_dim)
 
+        # --- ✅ EVITAR ALINEACIÓN LR->HR EN XARRAY ---
+        # Si LR y HR comparten nombres de dims, xarray intenta alinear y expande LR con NaNs.
+        # Renombramos dims de LR para que sean independientes.
+        lr_lat_dim = 'latitude' if 'latitude' in ds_lr_norm.dims else ('lat' if 'lat' in ds_lr_norm.dims else 'y')
+        lr_lon_dim = 'longitude' if 'longitude' in ds_lr_norm.dims else ('lon' if 'lon' in ds_lr_norm.dims else 'x')
+        rename_map = {}
+        if lr_lat_dim == hr_lat_dim:
+            rename_map[lr_lat_dim] = f"{lr_lat_dim}_lr"
+        if lr_lon_dim == hr_lon_dim:
+            rename_map[lr_lon_dim] = f"{lr_lon_dim}_lr"
+        if rename_map:
+            ds_lr_norm = ds_lr_norm.rename(rename_map)
+            lr_lat_dim = rename_map.get(lr_lat_dim, lr_lat_dim)
+            lr_lon_dim = rename_map.get(lr_lon_dim, lr_lon_dim)
+
+        # --- 🧪 SANITY: evitar LR alineado (NaNs masivos) ---
+        # Revisamos una muestra pequeña para detectar alineación accidental con HR.
+        try:
+            t_dim = "time" if "time" in ds_lr_norm.dims else ds_lr_norm.dims[0]
+            t_len = int(ds_lr_norm.sizes.get(t_dim, 1))
+            t_slice = slice(0, min(10, t_len))
+            lr_nan_ratio = float(ds_lr_norm.isnull().isel({t_dim: t_slice}).mean().compute().item())
+            if lr_nan_ratio > 0.01:
+                raise RuntimeError(
+                    f"LR NaN ratio alto ({lr_nan_ratio:.3f}) en muestra. "
+                    "Probable alineación LR→HR por dims compartidas."
+                )
+        except Exception as e:
+            print(f"⚠️ Sanity LR NaN ratio: {e}")
+
         # 8. Guardar
         ds_final = xr.Dataset({"hr_target": ds_hr_norm, "lr_input": ds_lr_norm})
         
         # Actualizamos la config con las dimensiones reales lat/lon
-        self.cfg.LR_SHAPE = (ds_lr_clipped.sizes['latitude'], ds_lr_clipped.sizes['longitude'])
+        self.cfg.LR_SHAPE = (ds_lr_norm.sizes[lr_lat_dim], ds_lr_norm.sizes[lr_lon_dim])
         
         if os.path.exists(self.cache_dir): shutil.rmtree(self.cache_dir)
         
-        encoding = {k: {'compressor': zarr.Blosc(cname='zstd', clevel=3)} for k in ds_final.data_vars}
+        try:
+            import zarr as _zarr
+            from packaging import version as _version
+            if _version.parse(_zarr.__version__).major >= 3:
+                print("⚠️ Zarr v3 detectado: guardando sin compresión")
+                encoding = {}
+            else:
+                from numcodecs import Blosc
+                compressor = Blosc(cname='zstd', clevel=3)
+                encoding = {k: {'compressor': compressor} for k in ds_final.data_vars}
+        except Exception as e:
+            print(f"⚠️ No compressor available: {e}. Saving without compression.")
+            encoding = {}
         print("💾 Guardando Zarr...")
         with ProgressBar():
             ds_final.chunk({'time': 100}).to_zarr(self.cache_dir, mode='w', encoding=encoding, consolidated=True)
             
         print("✅ ETL Finalizado.")
         
-    def get_tf_datasets(self):
+    def get_tf_datasets(self, include_test: bool = False):
         """Generadores Multi-Canal (Corrige conflicto de nombres Lat/Lon vs Y/X)"""
 
         
@@ -377,8 +621,8 @@ class BigDataPipeline:
         # Buscamos qué nombres usa Específicamente la variable 'lr_input'
         da_lr = ds['lr_input']
         lr_dims_list = list(da_lr.dims)
-        lr_lat = next((d for d in lr_dims_list if d in ['latitude', 'lat', 'y']), 'y')
-        lr_lon = next((d for d in lr_dims_list if d in ['longitude', 'lon', 'x']), 'x')
+        lr_lat = next((d for d in lr_dims_list if d in ['latitude_lr', 'lat_lr', 'y_lr', 'latitude', 'lat', 'y']), 'y')
+        lr_lon = next((d for d in lr_dims_list if d in ['longitude_lr', 'lon_lr', 'x_lr', 'longitude', 'lon', 'x']), 'x')
         
         # Tamaño REAL del input (debe ser pequeño, ej: 5x9)
         real_lr_h = da_lr.sizes[lr_lat]
@@ -392,6 +636,33 @@ class BigDataPipeline:
         hr_dims_list = list(da_hr.dims)
         hr_y = next((d for d in hr_dims_list if d in ['y', 'latitude', 'lat']), 'y')
         hr_x = next((d for d in hr_dims_list if d in ['x', 'longitude', 'lon']), 'x')
+        real_hr_h = da_hr.sizes[hr_y]
+        real_hr_w = da_hr.sizes[hr_x]
+        if self.cfg.HR_SHAPE != (real_hr_h, real_hr_w):
+            print(f"   ⚠️ CORRECCIÓN HR_SHAPE: {self.cfg.HR_SHAPE} -> ({real_hr_h}, {real_hr_w}).")
+            self.cfg.HR_SHAPE = (real_hr_h, real_hr_w)
+
+        # Detectar orientación de longitudes y alinear LR con HR si es necesario
+        def _order(vals):
+            diffs = np.diff(vals)
+            if np.all(diffs > 0):
+                return "asc"
+            if np.all(diffs < 0):
+                return "desc"
+            return "unknown"
+
+        try:
+            lr_lon_vals = ds[lr_lon].values
+            hr_lon_vals = ds[hr_x].values
+            lr_order = _order(lr_lon_vals)
+            hr_order = _order(hr_lon_vals)
+        except Exception:
+            lr_order = hr_order = "unknown"
+
+        flip_lr_lon = False
+        if lr_order != "unknown" and hr_order != "unknown" and lr_order != hr_order:
+            flip_lr_lon = True
+            print(f"   ⚠️ Longitud order mismatch (LR={lr_order}, HR={hr_order}). Aplicando flip LR en lon.")
 
         # --- 🛑 2. ACTUALIZACIÓN DE CONFIGURACIÓN 🛑 ---
         # Ahora actualizamos Config usando las dimensiones del LR, no las del HR
@@ -417,7 +688,176 @@ class BigDataPipeline:
         static_norm = (static_data - mean_st) / (std_st + 1e-6)
         
         total_len = ds.sizes['time']
-        split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+        seq_len = self.cfg.SEQ_LEN
+        stride = int(getattr(self.cfg, "TEMPORAL_STRIDE", 1))
+        if stride < 1:
+            stride = 1
+        if stride > seq_len:
+            print(f"   ⚠️ TEMPORAL_STRIDE ({stride}) > SEQ_LEN ({seq_len}). Usando stride={seq_len}.")
+            stride = seq_len
+
+        temporal_sampler = getattr(self.cfg, "TEMPORAL_SAMPLER", "uniform")
+        season_balance = bool(getattr(self.cfg, "TEMPORAL_SEASON_BALANCE", False))
+        rng = np.random.default_rng(getattr(self.cfg, "SEED", 42))
+
+        def _build_time_weights():
+            if temporal_sampler not in ("weighted", "weighted_station"):
+                return None
+            # Base series: use HR mean over space
+            series = None
+            if temporal_sampler == "weighted_station":
+                station_path = getattr(self.cfg, "STATION_GRIB_PATH", "")
+                if station_path and os.path.exists(station_path):
+                    try:
+                        cfgrib_kwargs = {
+                            "filter_by_keys": {"typeOfLevel": "surface"},
+                            "errors": "ignore",
+                            "indexpath": "",
+                        }
+                        ds_st = xr.open_dataset(station_path, engine="cfgrib", backend_kwargs=cfgrib_kwargs)
+                        # pick variable
+                        for v in ["t2m", "2t", "tas", "airTemperature"]:
+                            if v in ds_st:
+                                var = v
+                                break
+                        else:
+                            var = list(ds_st.data_vars)[0]
+                        da = ds_st[var]
+                        # Celsius if needed
+                        if float(da.isel({da.dims[0]: slice(0, min(3, da.sizes[da.dims[0]]))}).mean().values) > 200:
+                            da = da - 273.15
+                        time_dim = next((d for d in da.dims if d in ["time", "valid_time"]), da.dims[0])
+                        # mean over all non-time dims
+                        reduce_dims = [d for d in da.dims if d != time_dim]
+                        series = da.mean(dim=reduce_dims).values
+                        station_times = pd.to_datetime(da[time_dim].values).floor("H")
+                        ds_times = pd.to_datetime(ds["time"].values).floor("H")
+                        # align to ds times
+                        time_map = {t: i for i, t in enumerate(station_times)}
+                        aligned = np.zeros(ds_times.shape[0], dtype=np.float32)
+                        for i, t in enumerate(ds_times):
+                            j = time_map.get(t)
+                            if j is not None:
+                                aligned[i] = series[j]
+                        series = aligned
+                    except Exception:
+                        series = None
+                if series is None:
+                    print("⚠️ No se pudo usar estaciones para pesos temporales, fallback a HR.")
+
+            if series is None:
+                try:
+                    hr_mean = da_hr.mean(dim=[d for d in da_hr.dims if d != 'time']).values
+                    series = hr_mean
+                except Exception:
+                    series = None
+
+            if series is None:
+                return None
+
+            # Temporal gradient as importance
+            series = np.asarray(series, dtype=np.float32)
+            grad = np.abs(np.diff(series, prepend=series[0]))
+            grad = grad - np.nanmin(grad)
+            gamma = float(getattr(self.cfg, "TEMPORAL_WEIGHT_GAMMA", 1.0))
+            if gamma != 1.0:
+                grad = np.power(grad, gamma)
+            min_prob = float(getattr(self.cfg, "TEMPORAL_MIN_PROB", 1e-6))
+            grad = grad + min_prob
+            grad = grad / np.sum(grad)
+            return grad
+
+        time_weights = _build_time_weights()
+
+        def _time_indices(times, start, end):
+            times = pd.to_datetime(times).values
+            start = np.datetime64(start)
+            end = np.datetime64(end)
+            start_idx = int(np.searchsorted(times, start, side="left"))
+            end_idx = int(np.searchsorted(times, end, side="left"))
+            return start_idx, end_idx
+
+        test_start = test_end = None
+        if getattr(self.cfg, "SPLIT_MODE", "fraction") == "time":
+            try:
+                times = ds['time'].values
+                train_start, train_end = _time_indices(times, self.cfg.TRAIN_START, self.cfg.TRAIN_END)
+                val_start, val_end = _time_indices(times, self.cfg.VAL_START, self.cfg.VAL_END)
+                if include_test:
+                    test_start, test_end = _time_indices(times, self.cfg.TEST_START, self.cfg.TEST_END)
+                print(f"   📂 Dataset (train) range: {train_start} -> {train_end}")
+                print(f"   📂 Dataset (val) range: {val_start} -> {val_end}")
+                if include_test:
+                    print(f"   📂 Dataset (test) range: {test_start} -> {test_end}")
+            except Exception as e:
+                print(f"⚠️ Time split fallback to fraction due to: {e}")
+                split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+                train_start, train_end = 0, split_idx
+                val_start, val_end = split_idx, total_len
+        else:
+            split_idx = int(total_len * self.cfg.SPLIT_FRACTION)
+            train_start, train_end = 0, split_idx
+            if include_test:
+                val_end = int(total_len * 0.9)
+                val_start = split_idx
+                test_start, test_end = val_end, total_len
+            else:
+                val_start, val_end = split_idx, total_len
+
+        # Precompute valid start indices
+        max_start_train = train_end - seq_len * stride
+        max_start_val = val_end - seq_len * stride
+        max_start_test = test_end - seq_len * stride if include_test else None
+        # Estimated samples and steps (for stable training with repeat)
+        train_samples = max(0, max_start_train - train_start)
+        val_samples = max(0, max_start_val - val_start)
+        if train_samples == 0:
+            train_samples = 1
+        if val_samples == 0:
+            val_samples = 1
+        self.train_steps = max(1, train_samples // max(1, self.cfg.BATCH_SIZE))
+        self.val_steps = max(1, val_samples // max(1, self.cfg.BATCH_SIZE))
+        if include_test and max_start_test is not None and test_start is not None:
+            test_samples = max(1, max_start_test - test_start)
+            self.test_steps = max(1, test_samples // max(1, self.cfg.BATCH_SIZE))
+
+        def _season_index(times_idx):
+            # DJF=0, MAM=1, JJA=2, SON=3
+            months = times_idx.month
+            seasons = np.zeros_like(months)
+            seasons[(months >= 3) & (months <= 5)] = 1
+            seasons[(months >= 6) & (months <= 8)] = 2
+            seasons[(months >= 9) & (months <= 11)] = 3
+            return seasons
+
+        times_pd = pd.to_datetime(ds["time"].values)
+        seasons = _season_index(times_pd)
+
+        def _sample_time(start_i, end_i, max_start):
+            if max_start is None or max_start <= start_i:
+                return start_i
+            if temporal_sampler == "uniform" and not season_balance:
+                return int(rng.integers(start_i, max_start))
+
+            # Build candidate indices
+            candidates = np.arange(start_i, max_start)
+            if candidates.size == 0:
+                return int(start_i)
+
+            # Seasonal balance
+            if season_balance:
+                season_ids = [0, 1, 2, 3]
+                available = [s for s in season_ids if np.any(seasons[candidates] == s)]
+                if available:
+                    chosen_season = rng.choice(available)
+                    candidates = candidates[seasons[candidates] == chosen_season]
+
+            if time_weights is None:
+                return int(rng.choice(candidates))
+
+            weights = time_weights[candidates]
+            weights = weights / np.sum(weights)
+            return int(rng.choice(candidates, p=weights))
         
         # Detectar canales LR
         if 'variable' in da_lr.sizes:
@@ -429,49 +869,72 @@ class BigDataPipeline:
             
         print(f"   ℹ️ Input Channels Detectados: {n_channels}")
 
-        def generator(start_i, end_i):
-            seq_len = self.cfg.SEQ_LEN
-            
-            for i in range(start_i, end_i - seq_len):
-                # 1. LR INPUT
-                # Usamos los nombres detectados para LR (lr_lat, lr_lon)
-                # Transpose: (Time, Alto, Ancho, Var)
-                if 'variable' in da_lr.dims:
-                     x_lr = da_lr.isel(time=slice(i, i+seq_len)) \
-                                 .transpose('time', lr_lat, lr_lon, 'variable') \
-                                 .values
-                else:
-                     x_lr = da_lr.isel(time=slice(i, i+seq_len)) \
-                                 .transpose('time', lr_lat, lr_lon) \
-                                 .values
-                     if x_lr.ndim == 3: x_lr = x_lr[..., np.newaxis]
-                
-                # 2. HR TARGET
-                # Usamos los nombres detectados para HR (hr_y, hr_x)
-                y_hr = da_hr.isel(time=slice(i, i+seq_len)) \
-                            .transpose('time', hr_y, hr_x) \
+        def generator(start_i, end_i, max_start):
+            # For weighted sampling, we draw with replacement for a fixed count
+            if temporal_sampler != "uniform" or season_balance:
+                sample_count = max(1, max_start - start_i)
+                for _ in range(sample_count):
+                    i = _sample_time(start_i, end_i, max_start)
+                    t_idx = slice(i, i + seq_len * stride, stride)
+                    yield _yield_at(i, t_idx)
+                return
+
+            for i in range(start_i, end_i - seq_len * stride):
+                t_idx = slice(i, i + seq_len * stride, stride)
+                yield _yield_at(i, t_idx)
+
+        def _yield_at(i, t_idx):
+            # 1. LR INPUT
+            # Usamos los nombres detectados para LR (lr_lat, lr_lon)
+            # Transpose: (Time, Alto, Ancho, Var)
+            if 'variable' in da_lr.dims:
+                x_lr = da_lr.isel(time=t_idx) \
+                            .transpose('time', lr_lat, lr_lon, 'variable') \
                             .values
-                y_hr = y_hr[..., np.newaxis] 
-                
-                # 3. STATIC
-                x_st = np.repeat(static_norm[np.newaxis, ...], seq_len, axis=0)
-                
-                yield (x_lr, x_st), y_hr
+            else:
+                x_lr = da_lr.isel(time=t_idx) \
+                            .transpose('time', lr_lat, lr_lon) \
+                            .values
+                if x_lr.ndim == 3:
+                    x_lr = x_lr[..., np.newaxis]
+            
+            if flip_lr_lon:
+                x_lr = x_lr[:, :, ::-1, :]
+            
+            # 2. HR TARGET
+            # Usamos los nombres detectados para HR (hr_y, hr_x)
+            y_hr = da_hr.isel(time=t_idx) \
+                        .transpose('time', hr_y, hr_x) \
+                        .values
+            y_hr = y_hr[..., np.newaxis] 
+            
+            # 3. STATIC — zero-copy view instead of materializing repeated buffers
+            x_st = np.broadcast_to(static_norm[np.newaxis, ...], (seq_len,) + static_norm.shape)
+            
+            return (x_lr, x_st), y_hr
 
         # Output Signatures
         lr_h, lr_w = self.cfg.LR_SHAPE
         st_h, st_w = self.cfg.HR_SHAPE
         
         spec_lr = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, lr_h, lr_w, n_channels), dtype=tf.float32)
-        spec_st = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, Config.STATIC_CHANNELS), dtype=tf.float32)
+        spec_st = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, self.cfg.STATIC_CHANNELS), dtype=tf.float32)
         spec_hr = tf.TensorSpec(shape=(self.cfg.SEQ_LEN, st_h, st_w, 1), dtype=tf.float32)
 
+        shuffle_buf = getattr(self.cfg, "SHUFFLE_BUFFER_SIZE", 100)
+        prefetch_buf = getattr(self.cfg, "PREFETCH_BUFFER_SIZE", 2)
         train_ds = tf.data.Dataset.from_generator(
-            lambda: generator(0, split_idx), output_signature=((spec_lr, spec_st), spec_hr)
-        ).shuffle(500).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+            lambda: generator(train_start, train_end, max_start_train), output_signature=((spec_lr, spec_st), spec_hr)
+        ).shuffle(shuffle_buf).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
         
         val_ds = tf.data.Dataset.from_generator(
-            lambda: generator(split_idx, total_len), output_signature=((spec_lr, spec_st), spec_hr)
-        ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+            lambda: generator(val_start, val_end, max_start_val), output_signature=((spec_lr, spec_st), spec_hr)
+        ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
+
+        if include_test:
+            test_ds = tf.data.Dataset.from_generator(
+                lambda: generator(test_start, test_end, max_start_test), output_signature=((spec_lr, spec_st), spec_hr)
+            ).batch(self.cfg.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
+            return train_ds, val_ds, test_ds
         
         return train_ds, val_ds

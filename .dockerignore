@@ -1,4 +1,6 @@
-# Docker ignore patterns
+# =============================================================
+# Docker ignore — Weather Urban Downscaling (Slim image)
+# =============================================================
 
 # Version control
 .git
@@ -27,18 +29,83 @@ __pycache__
 # Jupyter
 .ipynb_checkpoints
 
-# Data (mounted as volume, not copied)
+# Data (mounted as volume, not copied into image)
 data/
 experiments/
 processed_cache_zarr/
 
-# Documentation assets
+# Archive / legacy / non-production
+archive/
+reports/
+future_projects/
+
+# Cache / temp
+.mplconfig/
+.tmp_mpl/
+src/utils/cache/
+
+# Heavy files
+*.geojson
 *.png
 *.jpg
 *.jpeg
 *.gif
+*.svg
+*.pdf
+*.npy
+*.npz
+*.h5
+*.keras
+
+# Documentation (except README)
 *.md
 !README.md
+
+# Redundant requirements
+requirements.txt
+requirements_mac.txt
+requirements_mamba.txt
+requirements_torch.txt
+environment_torch.yml
+
+# Non-production scripts (figure generators, tiles, etc.)
+scripts/fig*.py
+scripts/fig_utils.py
+scripts/generate_paper_*.py
+scripts/generate_latex_*.py
+scripts/ab_compare_pipeline.py
+scripts/build_error_map.py
+scripts/evaluate_*.py
+scripts/feature_audit_correlation.py
+scripts/overfit_*.py
+scripts/repair_zarr_nans.py
+scripts/run_ablation_tiles*.py
+scripts/run_ablation_tiles_heatwave_caffeinate.sh
+scripts/run_inference*.py
+scripts/run_mamba_seq*.py
+scripts/run_p95_eval_caffeinate.sh
+scripts/train_tiles*.py
+scripts/train_torch.py
+scripts/train_transformer.py
+scripts/torch_gpu_train.py
+scripts/gpu_server_train.py
+scripts/check_data_health.py
+scripts/derive_aemet_heatwaves.py
+scripts/validate_data_coupling.py
+scripts/fullframe_local_fast.sh
+scripts/stats_config.npz
+
+# Root-level files not needed
+cronograma_tesis_final.png
+generar_cronograma.py
+check_architecture.py
+ablation_results.md
+train.py
+deploy_gpu_server.sh
+docker-gpu-setup.sh
+run-local.sh
+SERVER_ROADMAP.md
+DEPLOYMENT.md
 
 # IDX
 .idx/
@@ -46,3 +113,4 @@ processed_cache_zarr/
 # Misc
 *.log
 *.tmp
+*.bak

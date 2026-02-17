@@ -8,6 +8,7 @@ import os
 import sys
 import gc
 import time
+import json
 import numpy as np
 import tensorflow as tf
 from typing import Dict, Any
@@ -17,11 +18,11 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.extend([parent_dir, os.path.join(parent_dir, 'src')])
 
-from config.gpu_server_config import GPUServerConfig as Config
+from config.runtime import Config
 from src.optimized_data_pipeline import OptimizedBigDataPipeline
 from src.models_legacy import ModelZoo
 from src.models.transformer_optimized import build_lightweight_transformer_unet
-from src.utils_legacy import run_experiment, notify_completion
+from src.utils import notify_completion
 from src.losses import tf_hybrid_loss
 
 class GPUOptimizedTrainer:
@@ -29,6 +30,9 @@ class GPUOptimizedTrainer:
         self.config = Config
         self.pipeline = None
         self.models = {}
+        
+        if not hasattr(self.config, "GPU_MEMORY_GB"):
+            raise RuntimeError("GPU config requerido. Exporta USE_GPU_CONFIG=1 antes de ejecutar.")
         
         print(f"🚀 GPU Optimized Trainer inicializado")
         self.config.print_memory_info()
@@ -41,18 +45,23 @@ class GPUOptimizedTrainer:
         gpus = tf.config.list_physical_devices('GPU')
         if gpus:
             try:
-                # Memory growth
+                # Memory growth (only if no virtual device config is set)
                 for gpu in gpus:
+                    if tf.config.experimental.get_virtual_device_configuration(gpu):
+                        continue
+                    if self.config.GPU_MEMORY_GB:
+                        continue
                     tf.config.experimental.set_memory_growth(gpu, True)
                 
                 # Limitar memoria si se especifica
                 if self.config.GPU_MEMORY_GB:
-                    memory_limit = int(self.config.GPU_MEMORY_FRACTION * self.config.GPU_MEMORY_GB * 1024)
-                    tf.config.experimental.set_virtual_device_configuration(
-                        gpus[0],
-                        [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memory_limit)]
-                    )
-                    print(f"✅ GPU memory limitada a {memory_limit/1024:.1f}GB")
+                    if not tf.config.experimental.get_virtual_device_configuration(gpus[0]):
+                        memory_limit = int(self.config.GPU_MEMORY_FRACTION * self.config.GPU_MEMORY_GB * 1024)
+                        tf.config.experimental.set_virtual_device_configuration(
+                            gpus[0],
+                            [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memory_limit)]
+                        )
+                        print(f"✅ GPU memory limitada a {memory_limit/1024:.1f}GB")
                 
                 # Mixed precision
                 if self.config.MIXED_PRECISION:
@@ -93,12 +102,8 @@ class GPUOptimizedTrainer:
             print(f"   📦 Construyendo ConvLSTM optimizado...")
             models['ConvLSTM'] = ModelZoo.build_hybrid_unet_lstm()
             
-            # Transformer Optimizado
-            print(f"   📦 Construyendo Transformer optimizado...")
-            models['Transformer'] = build_lightweight_transformer_unet(
-                input_shape=input_shape,
-                max_memory_gb=self.config.GPU_MEMORY_GB or 8
-            )
+            # Transformer Optimizado (desactivado por OOM en HR con atención completa)
+            print(f"⚠️ Omitiendo Transformer (OOM en A10 con embedding grande)")
             
             # Mamba Optimizado (si hay suficiente memoria)
             if self.config.GPU_MEMORY_GB and self.config.GPU_MEMORY_GB >= 24:
@@ -123,6 +128,52 @@ class GPUOptimizedTrainer:
         print(f"\n🎯 Entrenando {model_name}...")
         
         try:
+            # Resume support: load previous history and weights if present
+            start_epoch = 0
+            history_seed = None
+            log_path = f"experiments/logs/{model_name}_gpu_optimized_log.csv"
+            state_path = f"experiments/logs/{model_name}_gpu_optimized_state.json"
+            if os.path.exists(log_path):
+                try:
+                    import pandas as pd
+                    df_hist = pd.read_csv(log_path)
+                    start_epoch = len(df_hist)
+                    history_seed = {
+                        'loss': df_hist.get('loss', []).tolist(),
+                        'val_loss': df_hist.get('val_loss', []).tolist(),
+                        'mae': df_hist.get('mae', []).tolist(),
+                        'val_mae': df_hist.get('val_mae', []).tolist(),
+                    }
+                    print(f"🔁 Resume enabled for {model_name}: starting at epoch {start_epoch + 1}")
+                except Exception as e:
+                    print(f"⚠️ Could not load history for resume: {e}")
+
+            if os.path.exists(state_path):
+                try:
+                    with open(state_path, "r") as f:
+                        state = json.load(f)
+                    if isinstance(state, dict):
+                        history_seed = state.get("history", history_seed)
+                        last_epoch = int(state.get("epoch", start_epoch))
+                        start_epoch = max(start_epoch, last_epoch)
+                        print(f"🔁 Resume state loaded for {model_name}: starting at epoch {start_epoch + 1}")
+                except Exception as e:
+                    print(f"⚠️ Could not load resume state: {e}")
+            
+            model_path = f"experiments/models/{model_name}_gpu_optimized.h5"
+            last_weights_path = f"experiments/models/{model_name}_gpu_optimized_last.weights.h5"
+            if os.path.exists(last_weights_path):
+                try:
+                    model.load_weights(last_weights_path)
+                    print(f"🔁 Loaded last weights from {last_weights_path}")
+                except Exception as e:
+                    print(f"⚠️ Could not load last weights for resume: {e}")
+            if os.path.exists(model_path):
+                try:
+                    model.load_weights(model_path)
+                    print(f"🔁 Loaded weights from {model_path}")
+                except Exception as e:
+                    print(f"⚠️ Could not load weights for resume: {e}")
             # Compilar con optimizador adaptativo
             optimizer = tf.keras.optimizers.Adam(learning_rate=self.config.LEARNING_RATE)
             
@@ -163,7 +214,12 @@ class GPUOptimizedTrainer:
             
             # Entrenamiento con gradient accumulation
             history = self._train_with_gradient_accumulation(
-                model, train_ds, val_ds, callbacks, model_name
+                model, train_ds, val_ds, callbacks, model_name,
+                start_epoch=start_epoch,
+                history_seed=history_seed,
+                state_path=state_path,
+                last_weights_path=last_weights_path,
+                log_path=log_path
             )
             
             print(f"✅ {model_name} entrenado exitosamente")
@@ -192,7 +248,19 @@ class GPUOptimizedTrainer:
             print(f"❌ Error entrenando {model_name}: {e}")
             raise
     
-    def _train_with_gradient_accumulation(self, model, train_ds, val_ds, callbacks, model_name):
+    def _train_with_gradient_accumulation(
+        self,
+        model,
+        train_ds,
+        val_ds,
+        callbacks,
+        model_name,
+        start_epoch=0,
+        history_seed=None,
+        state_path=None,
+        last_weights_path=None,
+        log_path=None,
+    ):
         """Implementar gradient accumulation para batches efectivos más grandes"""
         
         # Crear datasets más pequeños para accumulation
@@ -201,10 +269,30 @@ class GPUOptimizedTrainer:
         # Custom training loop con gradient accumulation
         epochs = self.config.EPOCHS
         accumulation_steps = self.config.GRADIENT_ACCUMULATION_STEPS
+        loss_fn = tf_hybrid_loss()
         
-        history = {'loss': [], 'val_loss': [], 'mae': [], 'val_mae': []}
-        
-        for epoch in range(epochs):
+        history = history_seed or {'loss': [], 'val_loss': [], 'mae': [], 'val_mae': []}
+        if start_epoch >= epochs:
+            print(f"✅ {model_name} already completed {epochs} epochs. Skipping.")
+            return history
+
+        def _save_state(epoch_idx):
+            if not state_path:
+                return
+            try:
+                payload = {
+                    "epoch": int(epoch_idx),
+                    "history": history,
+                }
+                tmp_path = f"{state_path}.tmp"
+                os.makedirs(os.path.dirname(state_path), exist_ok=True)
+                with open(tmp_path, "w") as f:
+                    json.dump(payload, f)
+                os.replace(tmp_path, state_path)
+            except Exception as e:
+                print(f"⚠️ No se pudo guardar estado de resume: {e}")
+
+        for epoch in range(start_epoch, epochs):
             print(f"\n📅 Epoch {epoch + 1}/{epochs}")
             
             # Training con accumulation
@@ -267,11 +355,28 @@ class GPUOptimizedTrainer:
             
             print(f"   📊 Train Loss: {avg_train_loss:.4f}, MAE: {avg_train_mae:.4f}")
             print(f"   📊 Val Loss: {val_loss:.4f}, MAE: {val_mae:.4f}")
+
+            # Save last weights + resume state
+            if last_weights_path:
+                try:
+                    model.save_weights(last_weights_path)
+                except Exception as e:
+                    print(f"⚠️ No se pudo guardar last weights: {e}")
+            _save_state(epoch + 1)
+
+            if log_path:
+                try:
+                    import pandas as pd
+                    df = pd.DataFrame(history)
+                    df.to_csv(log_path, index=False)
+                except Exception as e:
+                    print(f"⚠️ No se pudo actualizar log CSV: {e}")
             
             # Early stopping manual
-            if len(history['val_loss']) >= self.config.EARLY_STOPPING_PATIENCE:
+            if len(history['val_loss']) > self.config.EARLY_STOPPING_PATIENCE:
                 recent_losses = history['val_loss'][-self.config.EARLY_STOPPING_PATIENCE:]
-                if all(loss >= min(history['val_loss'][:-self.config.EARLY_STOPPING_PATIENCE]) for loss in recent_losses):
+                prev_losses = history['val_loss'][:-self.config.EARLY_STOPPING_PATIENCE]
+                if prev_losses and all(loss >= min(prev_losses) for loss in recent_losses):
                     print(f"🛑 Early stopping triggered at epoch {epoch + 1}")
                     break
         

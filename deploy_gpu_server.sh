@@ -27,6 +27,8 @@ print_error() {
     echo -e "\033[1;31m❌ $1\033[0m"
 }
 
+COMPOSE_BIN=""
+
 # Verificar requisitos
 check_requirements() {
     print_status "Verificando requisitos del sistema..."
@@ -37,9 +39,13 @@ check_requirements() {
         exit 1
     fi
     
-    # Docker Compose
-    if ! command -v docker-compose &> /dev/null; then
-        print_error "Docker Compose no está instalado"
+    # Docker Compose (v2 preferido)
+    if command -v docker-compose &> /dev/null; then
+        COMPOSE_BIN="docker-compose"
+    elif docker compose version &> /dev/null; then
+        COMPOSE_BIN="docker compose"
+    else
+        print_error "Docker Compose no está instalado (docker compose / docker-compose)"
         exit 1
     fi
     
@@ -96,8 +102,8 @@ prepare_data() {
     if [[ ! -d "data/processed/weather_cache.zarr" ]]; then
         print_warning "Datos procesados no encontrados. Ejecutando preprocessing..."
         
-        docker-compose -f docker-compose.gpu-optimized.yml --profile preprocessing up data-prep
-        docker-compose -f docker-compose.gpu-optimized.yml --profile preprocessing down
+        $COMPOSE_BIN -f docker-compose.gpu-optimized.yml --profile preprocessing up data-prep
+        $COMPOSE_BIN -f docker-compose.gpu-optimized.yml --profile preprocessing down
         
         print_success "Preprocessing completado"
     else
@@ -111,14 +117,14 @@ run_training() {
     
     # Iniciar monitor de memoria
     print_status "   🧠 Iniciando monitor de memoria..."
-    docker-compose -f docker-compose.gpu-optimized.yml --profile monitoring up -d memory-monitor
+    $COMPOSE_BIN -f docker-compose.gpu-optimized.yml --profile monitoring up -d memory-monitor
     
     # Entrenamiento TensorFlow
     print_status "   🎯 Iniciando entrenamiento TensorFlow..."
-    docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up tf-trainer
+    $COMPOSE_BIN -f docker-compose.gpu-optimized.yml --profile training --profile gpu up tf-trainer
     
     # Limpiar
-    docker-compose -f docker-compose.gpu-optimized.yml down
+    $COMPOSE_BIN -f docker-compose.gpu-optimized.yml down
     
     print_success "Entrenamiento completado"
 }
@@ -128,7 +134,7 @@ run_transformer_training() {
     if [[ $1 == "--include-transformer" ]]; then
         print_status "🤖 Iniciando entrenamiento Transformer..."
         
-        docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up transformer-trainer
+        $COMPOSE_BIN -f docker-compose.gpu-optimized.yml --profile training --profile gpu up transformer-trainer
         
         print_success "Entrenamiento Transformer completado"
     else
@@ -142,7 +148,7 @@ run_pytorch_training() {
     if [[ $1 == "--include-mamba" ]]; then
         print_status "🔥 Iniciando entrenamiento PyTorch Mamba..."
         
-        docker-compose -f docker-compose.gpu-optimized.yml --profile training --profile gpu up torch-trainer
+        $COMPOSE_BIN -f docker-compose.gpu-optimized.yml --profile training --profile gpu up torch-trainer
         
         print_success "Entrenamiento Mamba completado"
     else
@@ -167,7 +173,7 @@ generate_results() {
 cleanup() {
     print_status "Limpiando recursos Docker..."
     
-    docker-compose -f docker-compose.gpu-optimized.yml down --remove-orphans
+    $COMPOSE_BIN -f docker-compose.gpu-optimized.yml down --remove-orphans
     docker system prune -f
     
     print_success "Limpieza completada"

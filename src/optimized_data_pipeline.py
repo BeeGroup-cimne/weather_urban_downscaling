@@ -18,7 +18,7 @@ except ImportError:
     psutil = None
 
 # Importar configuración
-from config.gpu_server_config import GPUServerConfig as Config
+from config.runtime import Config
 
 class OptimizedBigDataPipeline:
     def __init__(self, config=None):
@@ -118,7 +118,7 @@ class OptimizedBigDataPipeline:
                 
         return static_norm.astype(np.float32)
     
-    def get_tf_datasets(self) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
+    def get_tf_datasets(self, include_test: bool = False) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
         """Crear TensorFlow datasets con optimización de memoria (streaming)"""
         print("📦 Creando TF datasets optimizados...")
         
@@ -137,8 +137,8 @@ class OptimizedBigDataPipeline:
             
             lr_dims = list(da_lr.dims)
             lr_time = next((d for d in lr_dims if d in ['time', 'valid_time', 't']), 'time')
-            lr_lat = next((d for d in lr_dims if d in ['latitude', 'lat', 'y']), 'y')
-            lr_lon = next((d for d in lr_dims if d in ['longitude', 'lon', 'x']), 'x')
+            lr_lat = next((d for d in lr_dims if d in ['latitude_lr', 'lat_lr', 'y_lr', 'latitude', 'lat', 'y']), 'y')
+            lr_lon = next((d for d in lr_dims if d in ['longitude_lr', 'lon_lr', 'x_lr', 'longitude', 'lon', 'x']), 'x')
             lr_var = next((d for d in lr_dims if d in ['variable', 'channel', 'var']), None)
             
             # Ajustar configuración LR/CHANNELS
@@ -166,6 +166,28 @@ class OptimizedBigDataPipeline:
             if self.config.HR_SHAPE != (real_hr_h, real_hr_w):
                 print(f"⚠️ HR_SHAPE: {self.config.HR_SHAPE} -> ({real_hr_h}, {real_hr_w})")
                 self.config.HR_SHAPE = (real_hr_h, real_hr_w)
+
+            # Detect longitude order mismatch and align LR with HR
+            def _order(vals):
+                diffs = np.diff(vals)
+                if np.all(diffs > 0):
+                    return "asc"
+                if np.all(diffs < 0):
+                    return "desc"
+                return "unknown"
+
+            try:
+                lr_lon_vals = ds[lr_lon].values
+                hr_lon_vals = ds[hr_x].values
+                lr_order = _order(lr_lon_vals)
+                hr_order = _order(hr_lon_vals)
+            except Exception:
+                lr_order = hr_order = "unknown"
+
+            flip_lr_lon = False
+            if lr_order != "unknown" and hr_order != "unknown" and lr_order != hr_order:
+                flip_lr_lon = True
+                print(f"⚠️ Longitud order mismatch (LR={lr_order}, HR={hr_order}). Aplicando flip LR en lon.")
             
             # Cargar datos estáticos
             if self.static_processed is None:
@@ -196,35 +218,191 @@ class OptimizedBigDataPipeline:
                 print(f"⚠️ Static shape {static_norm.shape[:2]} no coincide con HR_SHAPE {self.config.HR_SHAPE}")
             
             total_len = ds.sizes[lr_time]
-            split_idx = int(total_len * self.config.SPLIT_FRACTION)
             seq_len = self.config.SEQ_LEN
+            stride = int(getattr(self.config, "TEMPORAL_STRIDE", 1))
+            if stride < 1:
+                stride = 1
+            if stride > seq_len:
+                print(f"⚠️ TEMPORAL_STRIDE ({stride}) > SEQ_LEN ({seq_len}). Usando stride={seq_len}.")
+                stride = seq_len
+            temporal_sampler = getattr(self.config, "TEMPORAL_SAMPLER", "uniform")
+            season_balance = bool(getattr(self.config, "TEMPORAL_SEASON_BALANCE", False))
+            rng = np.random.default_rng(getattr(self.config, "SEED", 42))
+
+            def _time_indices(times, start, end):
+                times = pd.to_datetime(times).values
+                start = np.datetime64(start)
+                end = np.datetime64(end)
+                start_idx = int(np.searchsorted(times, start, side="left"))
+                end_idx = int(np.searchsorted(times, end, side="left"))
+                return start_idx, end_idx
+
+            test_start = test_end = None
+            if getattr(self.config, "SPLIT_MODE", "fraction") == "time":
+                try:
+                    times = ds[lr_time].values
+                    train_start, train_end = _time_indices(times, self.config.TRAIN_START, self.config.TRAIN_END)
+                    val_start, val_end = _time_indices(times, self.config.VAL_START, self.config.VAL_END)
+                    if include_test:
+                        test_start, test_end = _time_indices(times, self.config.TEST_START, self.config.TEST_END)
+                    print(f"   📂 Dataset (train) range: {train_start} -> {train_end}")
+                    print(f"   📂 Dataset (val) range: {val_start} -> {val_end}")
+                    if include_test:
+                        print(f"   📂 Dataset (test) range: {test_start} -> {test_end}")
+                except Exception as e:
+                    print(f"⚠️ Time split fallback to fraction due to: {e}")
+                    split_idx = int(total_len * self.config.SPLIT_FRACTION)
+                    train_start, train_end = 0, split_idx
+                    val_start, val_end = split_idx, total_len
+            else:
+                split_idx = int(total_len * self.config.SPLIT_FRACTION)
+                train_start, train_end = 0, split_idx
+                if include_test:
+                    val_end = int(total_len * 0.9)
+                    val_start = split_idx
+                    test_start, test_end = val_end, total_len
+                else:
+                    val_start, val_end = split_idx, total_len
             
+            # Precompute valid start indices
+            max_start_train = train_end - seq_len * stride
+            max_start_val = val_end - seq_len * stride
+            max_start_test = test_end - seq_len * stride if include_test else None
+
+            # Temporal weights (optional)
+            def _build_time_weights():
+                if temporal_sampler not in ("weighted", "weighted_station"):
+                    return None
+                series = None
+                if temporal_sampler == "weighted_station":
+                    station_path = getattr(self.config, "STATION_GRIB_PATH", "")
+                    if station_path and os.path.exists(station_path):
+                        try:
+                            cfgrib_kwargs = {
+                                "filter_by_keys": {"typeOfLevel": "surface"},
+                                "errors": "ignore",
+                                "indexpath": "",
+                            }
+                            ds_st = xr.open_dataset(station_path, engine="cfgrib", backend_kwargs=cfgrib_kwargs)
+                            for v in ["t2m", "2t", "tas", "airTemperature"]:
+                                if v in ds_st:
+                                    var = v
+                                    break
+                            else:
+                                var = list(ds_st.data_vars)[0]
+                            da = ds_st[var]
+                            if float(da.isel({da.dims[0]: slice(0, min(3, da.sizes[da.dims[0]]))}).mean().values) > 200:
+                                da = da - 273.15
+                            time_dim = next((d for d in da.dims if d in ["time", "valid_time"]), da.dims[0])
+                            reduce_dims = [d for d in da.dims if d != time_dim]
+                            series = da.mean(dim=reduce_dims).values
+                            st_times = pd.to_datetime(da[time_dim].values).floor("H")
+                            ds_times = pd.to_datetime(ds[lr_time].values).floor("H")
+                            time_map = {t: i for i, t in enumerate(st_times)}
+                            aligned = np.zeros(ds_times.shape[0], dtype=np.float32)
+                            for i, t in enumerate(ds_times):
+                                j = time_map.get(t)
+                                if j is not None:
+                                    aligned[i] = series[j]
+                            series = aligned
+                        except Exception:
+                            series = None
+                    if series is None:
+                        print("⚠️ No se pudo usar estaciones para pesos temporales, fallback a HR.")
+
+                if series is None:
+                    try:
+                        hr_mean = da_hr.mean(dim=[d for d in da_hr.dims if d != hr_time]).values
+                        series = hr_mean
+                    except Exception:
+                        series = None
+                if series is None:
+                    return None
+
+                series = np.asarray(series, dtype=np.float32)
+                grad = np.abs(np.diff(series, prepend=series[0]))
+                grad = grad - np.nanmin(grad)
+                gamma = float(getattr(self.config, "TEMPORAL_WEIGHT_GAMMA", 1.0))
+                if gamma != 1.0:
+                    grad = np.power(grad, gamma)
+                min_prob = float(getattr(self.config, "TEMPORAL_MIN_PROB", 1e-6))
+                grad = grad + min_prob
+                grad = grad / np.sum(grad)
+                return grad
+
+            time_weights = _build_time_weights()
+            times_pd = pd.to_datetime(ds[lr_time].values)
+
+            def _season_index(times_idx):
+                months = times_idx.month
+                seasons = np.zeros_like(months)
+                seasons[(months >= 3) & (months <= 5)] = 1
+                seasons[(months >= 6) & (months <= 8)] = 2
+                seasons[(months >= 9) & (months <= 11)] = 3
+                return seasons
+
+            seasons = _season_index(times_pd)
+
+            def _sample_time(start_i, end_i, max_start):
+                if max_start is None or max_start <= start_i:
+                    return start_i
+                if temporal_sampler == "uniform" and not season_balance:
+                    return int(rng.integers(start_i, max_start))
+                candidates = np.arange(start_i, max_start)
+                if candidates.size == 0:
+                    return int(start_i)
+                if season_balance:
+                    season_ids = [0, 1, 2, 3]
+                    available = [s for s in season_ids if np.any(seasons[candidates] == s)]
+                    if available:
+                        chosen = rng.choice(available)
+                        candidates = candidates[seasons[candidates] == chosen]
+                if time_weights is None:
+                    return int(rng.choice(candidates))
+                weights = time_weights[candidates]
+                weights = weights / np.sum(weights)
+                return int(rng.choice(candidates, p=weights))
+
             # Generador streaming para evitar OOM
-            def generator(start_i, end_i):
-                for i in range(start_i, end_i - seq_len):
-                    if lr_var:
-                        x_lr = da_lr.isel({lr_time: slice(i, i + seq_len)}) \
-                            .transpose(lr_time, lr_lat, lr_lon, lr_var) \
-                            .values
-                    else:
-                        x_lr = da_lr.isel({lr_time: slice(i, i + seq_len)}) \
-                            .transpose(lr_time, lr_lat, lr_lon) \
-                            .values
-                        if x_lr.ndim == 3:
-                            x_lr = x_lr[..., np.newaxis]
-                    
-                    y_hr = da_hr.isel({hr_time: slice(i, i + seq_len)}) \
-                        .transpose(hr_time, hr_y, hr_x) \
+            def generator(start_i, end_i, max_start):
+                if temporal_sampler != "uniform" or season_balance:
+                    sample_count = max(1, max_start - start_i)
+                    for _ in range(sample_count):
+                        i = _sample_time(start_i, end_i, max_start)
+                        t_idx = slice(i, i + seq_len * stride, stride)
+                        yield _yield_at(t_idx)
+                    return
+                for i in range(start_i, end_i - seq_len * stride):
+                    t_idx = slice(i, i + seq_len * stride, stride)
+                    yield _yield_at(t_idx)
+
+            def _yield_at(t_idx):
+                if lr_var:
+                    x_lr = da_lr.isel({lr_time: t_idx}) \
+                        .transpose(lr_time, lr_lat, lr_lon, lr_var) \
                         .values
-                    if y_hr.ndim == 3:
-                        y_hr = y_hr[..., np.newaxis]
-                    
-                    x_st = np.broadcast_to(
-                        static_norm[np.newaxis, ...],
-                        (seq_len, *static_norm.shape)
-                    )
-                    
-                    yield (x_lr, x_st), y_hr
+                else:
+                    x_lr = da_lr.isel({lr_time: t_idx}) \
+                        .transpose(lr_time, lr_lat, lr_lon) \
+                        .values
+                    if x_lr.ndim == 3:
+                        x_lr = x_lr[..., np.newaxis]
+
+                if flip_lr_lon:
+                    x_lr = x_lr[:, :, ::-1, :]
+                
+                y_hr = da_hr.isel({hr_time: t_idx}) \
+                    .transpose(hr_time, hr_y, hr_x) \
+                    .values
+                if y_hr.ndim == 3:
+                    y_hr = y_hr[..., np.newaxis]
+                
+                x_st = np.broadcast_to(
+                    static_norm[np.newaxis, ...],
+                    (seq_len, *static_norm.shape)
+                )
+                
+                return (x_lr, x_st), y_hr
             
             # Output signatures
             lr_h, lr_w = self.config.LR_SHAPE
@@ -239,16 +417,24 @@ class OptimizedBigDataPipeline:
             prefetch_buf = getattr(self.config, "PREFETCH_BUFFER_SIZE", 2)
             
             train_ds = tf.data.Dataset.from_generator(
-                lambda: generator(0, split_idx),
+                lambda: generator(train_start, train_end, max_start_train),
                 output_signature=((spec_lr, spec_st), spec_hr)
             ).shuffle(shuffle_buf).batch(self.config.BATCH_SIZE, drop_remainder=True) \
              .prefetch(prefetch_buf)
             
             val_ds = tf.data.Dataset.from_generator(
-                lambda: generator(split_idx, total_len),
+                lambda: generator(val_start, val_end, max_start_val),
                 output_signature=((spec_lr, spec_st), spec_hr)
             ).batch(self.config.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
-            
+
+            if include_test:
+                test_ds = tf.data.Dataset.from_generator(
+                    lambda: generator(test_start, test_end, max_start_test),
+                    output_signature=((spec_lr, spec_st), spec_hr)
+                ).batch(self.config.BATCH_SIZE, drop_remainder=True).prefetch(prefetch_buf)
+                print(f"✅ Datasets creados: Train/Val/Test streaming")
+                return train_ds, val_ds, test_ds
+
             print(f"✅ Datasets creados: Train/Val streaming")
             return train_ds, val_ds
             
@@ -310,7 +496,7 @@ class OptimizedBigDataPipeline:
         if training:
             # Shuffle con buffer pequeño para ahorrar memoria
             dataset = dataset.shuffle(
-                buffer_size=min(self.config.SHUFFLE_BUFFER_SIZE, len(x_data)),
+                buffer_size=min(self.config.SHUFFLE_BUFFER_SIZE, len(x_lr)),
                 seed=self.config.SEED
             )
         

@@ -5,6 +5,7 @@ LABEL maintainer="your-email@example.com"
 LABEL description="PyTorch environment for Weather Urban Downscaling with Mamba SSM"
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PIP_NO_BUILD_ISOLATION=1
 WORKDIR /app
 
 # Install system dependencies
@@ -20,9 +21,11 @@ RUN apt-get update && apt-get install -y \
 
 # Copy and install Python dependencies
 COPY requirements_torch.txt .
+COPY requirements_mamba.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir packaging && \
-    pip install --no-cache-dir -r requirements_torch.txt
+    pip install --no-cache-dir -r requirements_torch.txt && \
+    pip install --no-cache-dir --no-build-isolation -r requirements_mamba.txt
 
 # Copy project code
 COPY config/ ./config/

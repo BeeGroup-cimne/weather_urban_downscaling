@@ -48,6 +48,17 @@ class Config:
     STATIC_CACHE_PATH = str(BASE_DIR / "data" / "processed" / "static_processed.npy")
 
     # ---------------------------------------------------------
+    # 2.1 SPLITS TEMPORALES (para paper)
+    # ---------------------------------------------------------
+    SPLIT_MODE = "time"  # "time" o "fraction"
+    TRAIN_START = "2017-01-01"
+    TRAIN_END = "2017-11-01"
+    VAL_START = "2017-11-01"
+    VAL_END = "2017-12-01"
+    TEST_START = "2017-12-01"
+    TEST_END = "2018-01-01"
+
+    # ---------------------------------------------------------
     # 3. HIPERPARÁMETROS
     # ---------------------------------------------------------
 
@@ -57,6 +68,10 @@ class Config:
     LEARNING_RATE = 1e-4
     SEQ_LEN = 6 
     SPLIT_FRACTION = 0.8 
+    # Pasos por época (None = fullframe, usar todo el dataset)
+    MAX_STEPS_PER_EPOCH = None
+    SHUFFLE_BUFFER_SIZE = 50
+    PREFETCH_BUFFER_SIZE = 1
 
     # ---------------------------------------------------------
     # 4. DIMENSIONES
@@ -66,6 +81,33 @@ class Config:
     LR_SHAPE = (4, 3) 
     CHANNELS = 9
     STATIC_CHANNELS = 13
+    UNET_BASE_FILTERS = 32
+
+    # Regularización / generalización
+    L2_WEIGHT_DECAY = 1e-4
+    GAUSSIAN_NOISE_STD = 0.01
+    STATS_TRAIN_ONLY = True
+    # Robustez de normalización: evita amplificación extrema cuando std ~= 0
+    NORM_NEAR_ZERO_STD_THRESHOLD = 0.01
+    NORM_STD_FLOOR = 0.01
+
+    # ---------------------------------------------------------
+    # 5. TILE-BASED TRAINING (Optional)
+    # ---------------------------------------------------------
+    PATCH_SIZE = (96, 96)
+    PATCHES_PER_EPOCH = 2000
+    VAL_PATCHES_PER_EPOCH = 200
+    TILE_SAMPLER = "static_weighted"  # "static_weighted" | "uniform" | "error_weighted"
+    TILE_WEIGHT_ALPHA = 0.85          # mix of weighted vs uniform sampling
+    TILE_WEIGHT_GAMMA = 1.0           # emphasize extremes in weight map
+    TILE_MIN_PROB = 1e-6
+    TILE_ERROR_MAP_PATH = str(BASE_DIR / "experiments" / "tiles_error_map.npy")
+    TEMPORAL_STRIDE = 1
+    TEMPORAL_SAMPLER = "uniform"  # "uniform" | "weighted" | "weighted_station"
+    TEMPORAL_WEIGHT_GAMMA = 1.0
+    TEMPORAL_MIN_PROB = 1e-6
+    TEMPORAL_SEASON_BALANCE = False
+    STATION_GRIB_PATH = str(BASE_DIR / "data" / "processed" / "stations_t2m.grib")
 
 
 # Configuración Global de Semillas (Solo si las librerías están disponibles)

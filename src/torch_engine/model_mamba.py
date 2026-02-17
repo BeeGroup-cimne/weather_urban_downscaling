@@ -1,6 +1,67 @@
 import torch
 import torch.nn as nn
-from mamba_ssm import Mamba
+import torch.nn.functional as F
+
+try:
+    from mamba_ssm import Mamba as _MambaSSM
+    _HAS_MAMBA_SSM = True
+    _MAMBA_IMPORT_ERROR = None
+except Exception as exc:
+    _MambaSSM = None
+    _HAS_MAMBA_SSM = False
+    _MAMBA_IMPORT_ERROR = exc
+
+
+class _FallbackMambaBlock(nn.Module):
+    """
+    Lightweight fallback used when mamba_ssm is unavailable (e.g. local MPS setups).
+    Keeps input/output contract (B, L, C) so training pipeline remains testable.
+    """
+    def __init__(self, d_model, d_state=16, d_conv=4, expand=2):
+        super().__init__()
+        hidden = max(d_model, int(d_model * expand))
+        kernel_size = max(3, int(d_conv))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        self.norm = nn.LayerNorm(d_model)
+        self.depthwise_conv = nn.Conv1d(
+            in_channels=d_model,
+            out_channels=d_model,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=d_model,
+        )
+        self.proj = nn.Sequential(
+            nn.Linear(d_model, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, d_model),
+        )
+
+    def forward(self, x):
+        # x: (B, L, C)
+        residual = x
+        x = self.norm(x)
+        x = x.transpose(1, 2)              # (B, C, L)
+        x = self.depthwise_conv(x)
+        x = x.transpose(1, 2)              # (B, L, C)
+        if x.shape[1] != residual.shape[1]:
+            x = x[:, :residual.shape[1], :]
+        x = self.proj(x)
+        return residual + x
+
+
+_FALLBACK_WARNED = False
+
+
+def _build_mamba_block(d_model, d_state=16, d_conv=4, expand=2):
+    global _FALLBACK_WARNED
+    if _HAS_MAMBA_SSM:
+        return _MambaSSM(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+    if not _FALLBACK_WARNED:
+        print("⚠️ mamba_ssm not available; using local fallback block for Mamba.")
+        print(f"   Import error: {_MAMBA_IMPORT_ERROR}")
+        _FALLBACK_WARNED = True
+    return _FallbackMambaBlock(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
 
 class DownsrUNetMamba(nn.Module):
     def __init__(self, in_channels_dyn=9, in_channels_static=4, dim=32, seq_len=None):
@@ -24,8 +85,8 @@ class DownsrUNetMamba(nn.Module):
         self.d_model = dim*4
         # Mamba requires (Batch, Seq_Len, D_Model)
         # We will flatten Time * H * W into Seq_Len
-        self.mamba1 = Mamba(d_model=self.d_model, d_state=16, d_conv=4, expand=2)
-        self.mamba2 = Mamba(d_model=self.d_model, d_state=16, d_conv=4, expand=2) # Double block like TF
+        self.mamba1 = _build_mamba_block(d_model=self.d_model, d_state=16, d_conv=4, expand=2)
+        self.mamba2 = _build_mamba_block(d_model=self.d_model, d_state=16, d_conv=4, expand=2) # Double block like TF
         
         # Norm layer for Mamba stability
         self.norm = nn.LayerNorm(self.d_model)
@@ -68,10 +129,24 @@ class DownsrUNetMamba(nn.Module):
         _, c_out, h_out, w_out = y.shape
         return y.view(b, t, c_out, h_out, w_out)
 
+    def resize_5d(self, x, size):
+        """Resize 5D tensor (B, T, C, H, W) to target spatial size."""
+        b, t, c, h, w = x.shape
+        if (h, w) == size:
+            return x
+        x = x.view(b * t, c, h, w)
+        x = F.interpolate(x, size=size, mode="bilinear", align_corners=False)
+        return x.view(b, t, c, size[0], size[1])
+
     def forward(self, x_dyn, x_static):
         # x_dyn: (Batch, Time, C_dyn, H, W)
         # x_static: (Batch, Time, C_st, H, W)
         
+        # If static grid is HR and dynamic is LR, downsample static to match dynamic.
+        if x_static.shape[-2:] != x_dyn.shape[-2:]:
+            target_h, target_w = x_dyn.shape[-2], x_dyn.shape[-1]
+            x_static = self.resize_5d(x_static, (target_h, target_w))
+
         # 1. Concatenate Dynamic + Static along Channels
         x = torch.cat([x_dyn, x_static], dim=2) # Dim 2 is channels in (B, T, C, H, W)
         
@@ -84,7 +159,12 @@ class DownsrUNetMamba(nn.Module):
         p2 = self.time_distributed(self.pool2, c2)
         
         c3 = self.time_distributed(self.enc3, p2)
-        p3 = self.time_distributed(self.pool3, c3)
+        if c3.shape[-2] < 2 or c3.shape[-1] < 2:
+            p3 = c3
+            skip_pool3 = True
+        else:
+            p3 = self.time_distributed(self.pool3, c3)
+            skip_pool3 = False
         
         # 3. Mamba Bottleneck
         # TF Shape: (Batch, Time, H, W, C) -> Flattened to (Batch, T*H*W, C)
@@ -109,7 +189,11 @@ class DownsrUNetMamba(nn.Module):
         # 4. Decoder (Time Distributed)
         
         # Up 3
-        u3 = self.time_distributed(self.up3, x_neck)
+        if skip_pool3:
+            u3 = x_neck
+        else:
+            u3 = self.time_distributed(self.up3, x_neck)
+        u3 = self.resize_5d(u3, (c3.shape[-2], c3.shape[-1]))
         # Resize/Crop check optional, but Upsample should match if shapes are powers of 2.
         # Concatenate with skip connection c3
         u3 = torch.cat([u3, c3], dim=2) 
@@ -117,11 +201,13 @@ class DownsrUNetMamba(nn.Module):
         
         # Up 2
         u2 = self.time_distributed(self.up2, d3)
+        u2 = self.resize_5d(u2, (c2.shape[-2], c2.shape[-1]))
         u2 = torch.cat([u2, c2], dim=2)
         d2 = self.time_distributed(self.dec2, u2)
         
         # Up 1
         u1 = self.time_distributed(self.up1, d2)
+        u1 = self.resize_5d(u1, (c1.shape[-2], c1.shape[-1]))
         u1 = torch.cat([u1, c1], dim=2)
         d1 = self.time_distributed(self.dec1, u1)
         
@@ -129,4 +215,3 @@ class DownsrUNetMamba(nn.Module):
         out = self.time_distributed(self.final, d1)
         
         return out
-

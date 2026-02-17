@@ -5,9 +5,9 @@ from tensorflow.keras.layers import (
     Activation, Add, LeakyReLU, Resizing, Dropout, 
     MultiHeadAttention, Lambda, Permute, Dense, LayerNormalization
 )
-from tensorflow.keras import layers
+from tensorflow.keras import layers, regularizers
 from tensorflow.keras.models import Model
-from config.config import Config
+from config.runtime import Config
 
 # --- CLASE AUXILIAR: MAMBA BLOCK (Pure TF) ---
 
@@ -88,6 +88,18 @@ class SimpleMambaBlock(layers.Layer):
 
 class ModelZoo:
     @staticmethod
+    def _l2():
+        wd = getattr(Config, "L2_WEIGHT_DECAY", 0.0)
+        return regularizers.l2(wd) if wd and wd > 0 else None
+
+    @staticmethod
+    def _maybe_gaussian_noise(x):
+        std = getattr(Config, "GAUSSIAN_NOISE_STD", 0.0)
+        if std and std > 0:
+            return layers.GaussianNoise(std)(x)
+        return x
+
+    @staticmethod
     def get_optimizer(lr):
         """Selecciona el optimizador adecuado según el Hardware"""
         if Config.IS_MAC_SILICON:
@@ -112,10 +124,11 @@ class ModelZoo:
 
     @staticmethod
     def conv_block(x, filters):
-        x = TimeDistributed(Conv2D(filters, (3, 3), padding="same"))(x)
+        reg = ModelZoo._l2()
+        x = TimeDistributed(Conv2D(filters, (3, 3), padding="same", kernel_regularizer=reg))(x)
         x = TimeDistributed(BatchNormalization())(x)
         x = TimeDistributed(LeakyReLU(0.1))(x)
-        x = TimeDistributed(Conv2D(filters, (3, 3), padding="same"))(x)
+        x = TimeDistributed(Conv2D(filters, (3, 3), padding="same", kernel_regularizer=reg))(x)
         x = TimeDistributed(BatchNormalization())(x)
         x = TimeDistributed(LeakyReLU(0.1))(x)
         return x
@@ -132,7 +145,9 @@ class ModelZoo:
 
         x_reshaped = Lambda(flatten_spatial)(x)
         x_norm = LayerNormalization(epsilon=1e-6)(x_reshaped)
-        attn_out = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)(x_norm, x_norm)
+        # key_dim is per-head dimensionality. Using embed_dim directly here explodes memory.
+        head_dim = max(16, embed_dim // max(1, num_heads))
+        attn_out = MultiHeadAttention(num_heads=num_heads, key_dim=head_dim)(x_norm, x_norm)
         attn_out = Dropout(0.1)(attn_out)
         out1 = Add()([x_reshaped, attn_out])
 
@@ -159,7 +174,7 @@ class ModelZoo:
         - Nativo para 5D (sin errores de dimensión).
         - Mejor convergencia para LSTMs.
         """
-        from config.config import Config
+        from config.runtime import Config
         
         # 1. Inputs
         lr_input = Input(shape=(Config.SEQ_LEN, lr_shape[0], lr_shape[1], Config.CHANNELS), name="lr_input")
@@ -194,37 +209,40 @@ class ModelZoo:
     @classmethod
     def build_unet(cls):
         """Experimento 2: U-Net Standard"""
+        from config.runtime import Config
         inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, 9))
         inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, Config.STATIC_CHANNELS))
 
         # Bridge
-        x_up = TimeDistributed(Resizing(*Config.HR_SHAPE, interpolation="bilinear"))(inp_dyn)
+        x_dyn = cls._maybe_gaussian_noise(inp_dyn)
+        x_up = TimeDistributed(Resizing(*Config.HR_SHAPE, interpolation="bilinear"))(x_dyn)
         x = Concatenate()([x_up, inp_st])
 
         # Encoder
-        c1 = cls.conv_block(x, 32)
+        base = getattr(Config, "UNET_BASE_FILTERS", 32)
+        c1 = cls.conv_block(x, base)
         p1 = TimeDistributed(MaxPooling2D((2, 2)))(c1)
-        c2 = cls.conv_block(p1, 64)
+        c2 = cls.conv_block(p1, base * 2)
         p2 = TimeDistributed(MaxPooling2D((2, 2)))(c2)
-        c3 = cls.conv_block(p2, 128)
+        c3 = cls.conv_block(p2, base * 4)
         p3 = TimeDistributed(MaxPooling2D((2, 2)))(c3)
 
         # Bottleneck
-        b = cls.conv_block(p3, 256)
+        b = cls.conv_block(p3, base * 8)
         b = TimeDistributed(Dropout(0.3))(b)
 
         # Decoder
         u3 = TimeDistributed(Resizing(c3.shape[2], c3.shape[3]))(b)
         u3 = Concatenate()([u3, c3])
-        c4 = cls.conv_block(u3, 128)
+        c4 = cls.conv_block(u3, base * 4)
 
         u2 = TimeDistributed(Resizing(c2.shape[2], c2.shape[3]))(c4)
         u2 = Concatenate()([u2, c2])
-        c5 = cls.conv_block(u2, 64)
+        c5 = cls.conv_block(u2, base * 2)
 
         u1 = TimeDistributed(Resizing(c1.shape[2], c1.shape[3]))(c5)
         u1 = Concatenate()([u1, c1])
-        c6 = cls.conv_block(u1, 32)
+        c6 = cls.conv_block(u1, base)
 
         out = TimeDistributed(Conv2D(1, (1, 1), activation='linear'))(c6)
 
@@ -243,13 +261,15 @@ class ModelZoo:
         """
         # Inputs Dinámicos (LR) y Estáticos (HR)
         # Nota: Usamos '9' canales o 'None' si queremos flexibilidad total
+        from config.runtime import Config
         inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, 9)) 
         inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, Config.STATIC_CHANNELS))
 
         # --- 1. BRIDGE & FUSION ---
         # Escalamos la entrada LR al tamaño HR para concatenarla con los datos estáticos
         # Esto permite que la red vea la topografía (HR) desde la primera capa.
-        x_up = TimeDistributed(Resizing(*Config.HR_SHAPE, interpolation="bilinear"))(inp_dyn)
+        x_dyn = cls._maybe_gaussian_noise(inp_dyn)
+        x_up = TimeDistributed(Resizing(*Config.HR_SHAPE, interpolation="bilinear"))(x_dyn)
         x = Concatenate()([x_up, inp_st])
 
         # --- 2. ENCODER (Espacial / Frame a Frame) ---
@@ -324,8 +344,15 @@ class ModelZoo:
         p3 = TimeDistributed(MaxPooling2D((2, 2)))(c3)
 
         # --- TRANSFORMER BOTTLENECK ---
-        x_neck = TimeDistributed(Conv2D(256, (1, 1), padding="same"))(p3)
-        x_trans = cls.temporal_transformer_block(x_neck, embed_dim=256, num_heads=4)
+        transformer_dim = int(getattr(Config, "MODEL_DIM", 128))
+        transformer_dim = max(64, min(transformer_dim, 256))
+        x_neck = TimeDistributed(Conv2D(transformer_dim, (1, 1), padding="same"))(p3)
+        x_trans = cls.temporal_transformer_block(
+            x_neck,
+            embed_dim=transformer_dim,
+            num_heads=4,
+            ff_dim=transformer_dim * 2,
+        )
 
         # Decoder
         u3 = TimeDistributed(Resizing(c3.shape[2], c3.shape[3]))(x_trans)
@@ -354,7 +381,7 @@ class ModelZoo:
         - Bottleneck: Mamba Block (Mezcla contexto global temporal-espacial)
         - Decoder: Conv2DTranspose (Reconstruye detalles)
         """
-        from config.config import Config # Import local para evitar ciclos
+        from config.runtime import Config # Import local para evitar ciclos
         
         # 1. Inputs
         # LR Input: (Batch, Time, H_lr, W_lr, C_lr)
@@ -364,12 +391,11 @@ class ModelZoo:
 
         # 2. Pre-Procesado (Early Upsampling de LR)
         # Escalamos la imagen pequeña (5x9) al tamaño grande (251x251) para concatenar
+        # Reescalar LR directamente al tamaño HR (robusto para cualquier tamaño)
+        x_lr = ModelZoo._maybe_gaussian_noise(lr_input)
         x_lr_up = layers.TimeDistributed(
-            layers.UpSampling2D(size=(hr_shape[0] // lr_shape[0], hr_shape[1] // lr_shape[1]), interpolation='bilinear')
-        )(lr_input)
-        
-        # Ajuste fino de tamaño si la división no fue exacta
-        x_lr_up = layers.TimeDistributed(layers.Resizing(hr_shape[0], hr_shape[1]))(x_lr_up)
+            layers.Resizing(hr_shape[0], hr_shape[1], interpolation='bilinear')
+        )(x_lr)
 
         # 3. Concatenación (Early Fusion)
         x = layers.Concatenate(axis=-1)([x_lr_up, static_input])
@@ -377,21 +403,22 @@ class ModelZoo:
         # --- ENCODER (TimeDistributed Conv2D) ---
         # Extraemos características frame a frame
         skips = []
+        reg = ModelZoo._l2()
         
         # Block 1
-        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu'))(x)
-        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
         skips.append(x)
         x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x) # -> 125x125
 
         # Block 2
-        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu'))(x)
-        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
         skips.append(x)
         x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x) # -> 62x62
 
         # Block 3
-        x = layers.TimeDistributed(layers.Conv2D(128, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Conv2D(128, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
         skips.append(x)
         x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x) # -> 31x31
 
@@ -418,20 +445,20 @@ class ModelZoo:
         
         # Up 3
         x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
-        x = layers.TimeDistributed(layers.Conv2D(128, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Conv2D(128, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
         # Ajuste de shape por si el pooling fue impar
         x = layers.TimeDistributed(layers.Resizing(skips[2].shape[2], skips[2].shape[3]))(x)
         x = layers.Concatenate()([x, skips[2]])
         
         # Up 2
         x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
-        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
         x = layers.TimeDistributed(layers.Resizing(skips[1].shape[2], skips[1].shape[3]))(x)
         x = layers.Concatenate()([x, skips[1]])
         
         # Up 1
         x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
-        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu'))(x)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
         x = layers.TimeDistributed(layers.Resizing(skips[0].shape[2], skips[0].shape[3]))(x)
         x = layers.Concatenate()([x, skips[0]])
 
