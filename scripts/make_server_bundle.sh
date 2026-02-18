@@ -8,26 +8,26 @@ out="${1:-dist/weather_urban_downscaling_server_bundle.tar.gz}"
 root_name="weather_urban_downscaling"
 
 mkdir -p "$(dirname "$out")"
-tmp_dir="$(mktemp -d)"
+tmp_dir="$(dirname "$out")/tmp_bundle"
+rm -rf "$tmp_dir"
+mkdir -p "$tmp_dir"
 stage="${tmp_dir}/${root_name}"
 
 cleanup() { rm -rf "$tmp_dir"; }
 trap cleanup EXIT
 
-mkdir -p "$stage"
-
 copy_file() {
   local src="$1"
-  mkdir -p "${stage}/$(dirname "$src")"
-  cp -p "$src" "${stage}/${src}"
+  # Usar rsync para mayor robustez, ignorar errores si falla un archivo concreto.
+  rsync -R "$src" "$stage/" || echo "⚠️ Warning: Failed to copy $src"
 }
 
 filter_tracked() {
   local path="$1"
 
-  # Excluir imágenes (en cualquier parte del repo)
+  # Excluir imágenes (en cualquier parte del repo) y archivos problemáticos
   case "$path" in
-    *.png|*.jpg|*.jpeg|*.gif|*.svg|*.pdf) return 1 ;;
+    *.png|*.jpg|*.jpeg|*.gif|*.svg|*.pdf|ablation_results.md) return 1 ;;
   esac
 
   # Excluir checkpoints de notebooks
@@ -62,9 +62,14 @@ done < <(git ls-files -z)
 
 # Incluir archivos “server-ready” aunque aún no estén trackeados (útil antes de commitear).
 extra_files=(
-  "SERVER_ROADMAP.md"
+  "SERVER_README.md"
   "docker-compose.server-fullframe.yml"
   "scripts/run_server_fullframe.sh"
+  "scripts/run_ablation_tiles_heatwave_server.sh"
+  "scripts/run_stations_eval_ablation.sh"
+  "scripts/consolidate_experiment1.py"
+  "scripts/run_experiment3_fullframe_replica.sh"
+  "scripts/consolidate_experiment3.py"
   "scripts/make_server_bundle.sh"
 )
 for f in "${extra_files[@]}"; do

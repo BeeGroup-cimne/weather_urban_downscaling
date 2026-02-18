@@ -7,6 +7,7 @@ os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 import argparse
 import gc
 import sys
+import random
 
 import pandas as pd
 import tensorflow as tf
@@ -84,10 +85,57 @@ def main():
         default=6,
         help="Minimum temporal sequence length for all models in ablation.",
     )
+    parser.add_argument("--seed", type=int, default=None, help="Override random seed for reproducibility.")
+    parser.add_argument("--experiment-suffix", type=str, default="", help="Suffix appended to experiment names (e.g. S42).")
+    parser.add_argument("--epochs", type=int, default=None, help="Override Config.EPOCHS.")
+    parser.add_argument("--split-mode", default="inherit", choices=["inherit", "time", "fraction"])
+    parser.add_argument("--split-fraction", type=float, default=None)
+    parser.add_argument("--train-start", type=str, default=None)
+    parser.add_argument("--train-end", type=str, default=None)
+    parser.add_argument("--val-start", type=str, default=None)
+    parser.add_argument("--val-end", type=str, default=None)
+    parser.add_argument("--test-start", type=str, default=None)
+    parser.add_argument("--test-end", type=str, default=None)
     args = parser.parse_args()
+
+    if args.seed is not None:
+        Config.SEED = int(args.seed)
+        random.seed(Config.SEED)
+        try:
+            import numpy as np
+            np.random.seed(Config.SEED)
+        except Exception:
+            pass
+        tf.random.set_seed(Config.SEED)
+
+    if args.epochs is not None:
+        Config.EPOCHS = int(args.epochs)
+
+    if args.split_mode != "inherit":
+        Config.SPLIT_MODE = args.split_mode
+    if args.split_fraction is not None:
+        Config.SPLIT_FRACTION = float(args.split_fraction)
+    if args.train_start is not None:
+        Config.TRAIN_START = args.train_start
+    if args.train_end is not None:
+        Config.TRAIN_END = args.train_end
+    if args.val_start is not None:
+        Config.VAL_START = args.val_start
+    if args.val_end is not None:
+        Config.VAL_END = args.val_end
+    if args.test_start is not None:
+        Config.TEST_START = args.test_start
+    if args.test_end is not None:
+        Config.TEST_END = args.test_end
 
     print(f"\n🚀 INICIANDO ESTUDIO DE ABLACIÓN (Alineado con train.py)")
     print(f"   ⚡ Hardware: {Config.DEVICE}")
+    print(f"   🎲 Seed: {Config.SEED}")
+    print(f"   🔀 Split mode: {Config.SPLIT_MODE}")
+    if Config.SPLIT_MODE == "time":
+        print(f"   Train: {Config.TRAIN_START} -> {Config.TRAIN_END}")
+        print(f"   Val:   {Config.VAL_START} -> {Config.VAL_END}")
+        print(f"   Test:  {Config.TEST_START} -> {Config.TEST_END}")
 
     # "Full-frame" en este repo significa NO tiles (usar BigDataPipeline) y correr epochs completos.
     # Permite forzar comportamiento en servidores CPU/GPU via env var.
@@ -149,15 +197,52 @@ def main():
     # 2. BUCLE DE EXPERIMENTOS
     selected = args.models or [name for name, _ in EXPERIMENTS_TO_RUN]
     experiment_list = [(name, fn) for name, fn in EXPERIMENTS_TO_RUN if name in selected]
+    suffix = args.experiment_suffix.strip()
 
     for strategy_name, builder_func in experiment_list:
         clear_session()
         gc.collect()
         
         experiment_name = f"Ablation_{strategy_name.upper()}_Legacy"
+        if suffix:
+            experiment_name = f"{experiment_name}_{suffix}"
         print(f"\n{'='*60}")
         print(f"🏗️  MODELO: {strategy_name.upper()} (Legacy Architecture)")
         print(f"{'='*60}")
+
+        # --- RESUME LOGIC: Check if done ---
+        model_path_best = os.path.join(output_base_dir, "models", f"{experiment_name}_best.h5")
+        log_path = os.path.join(output_base_dir, "logs", f"{experiment_name}_log.csv")
+        
+        # Si existe el modelo "best" y el log tiene épocas completas, podríamos saltar
+        # Pero mejor dejamos que run_experiment decida si reanudar o no.
+        # Sin embargo, si ya terminó (época final alcanzada), run_experiment retornará None.
+        if os.path.exists(model_path_best) and os.path.exists(log_path):
+            try:
+                import pandas as pd
+                df_log = pd.read_csv(log_path)
+                if not df_log.empty and df_log["epoch"].iloc[-1] >= (Config.EPOCHS - 1):
+                    print(f"✅ Experimento {experiment_name} ya completado ({len(df_log)} épocas). Saltando.")
+                    
+                    # Cargar historial para el reporte final igualmente
+                    all_histories[strategy_name] = df_log
+                    final_metrics = {
+                        "final_epoch": df_log["epoch"].iloc[-1],
+                        "final_val_loss": df_log["val_loss"].iloc[-1],
+                        "final_val_mae": df_log["val_mae"].iloc[-1],
+                    }
+                    results_summary.append({
+                        'Model': strategy_name,
+                        'Params': "Unknown (Skipped)",
+                        'Final_Epoch': final_metrics["final_epoch"],
+                        'Final_Val_Loss': final_metrics["final_val_loss"],
+                        'Final_Val_MAE': final_metrics["final_val_mae"],
+                        'Best_Val_Loss': df_log['val_loss'].min(),
+                        'Best_Val_MAE': df_log['val_mae'].min()
+                    })
+                    continue
+            except Exception as e:
+                print(f"⚠️ Error verificando completitud de {experiment_name}: {e}. Se intentará reanudar.")
         
         try:
             # A. Construir Estructura (Usando ModelZoo Legacy)
@@ -214,8 +299,18 @@ def main():
             validation_steps=validation_steps,
         )
         
+        if history is None:
+            print(f"⏭️ Experimento {experiment_name} omitido (ya completado o error).")
+            # Intentar recuperar logs para el resumen
+            if os.path.exists(log_path):
+                import pandas as pd
+                history_df = pd.read_csv(log_path)
+                all_histories[strategy_name] = history_df
+                # Add to summary if not already added
+                # (Logic above handles full skip, this handles 'resume but finished immediately')
+            continue
+
         all_histories[strategy_name] = history
-        log_path = os.path.join(output_base_dir, "logs", f"{experiment_name}_log.csv")
         final_metrics = _get_last_epoch_metrics(history, log_path)
         
         # Guardamos métricas

@@ -7,7 +7,8 @@ class SimpleMambaBlock(layers.Layer):
     Sustituye Conv1D (buggy en Metal) por DepthwiseConv2D (estable).
     """
     def __init__(self, model_dim, d_state=16, d_conv=4, expand=2, **kwargs):
-        super().__init__(**kwargs)
+        # Explicit super() avoids AutoGraph edge-cases (KeyError('__class__')).
+        super(SimpleMambaBlock, self).__init__(**kwargs)
         self.model_dim = model_dim
         self.d_inner = int(expand * model_dim)
         self.d_conv = d_conv

@@ -1,38 +1,54 @@
-# Reporte de Resultados: Estudio de Ablación (Legacy Architecture)
+# Results Report: Tile Ablation (Legacy Models)
 
-Este documento resume el desempeño de los modelos evaluados utilizando la arquitectura `Legacy` (sin BatchNormalization, activación ReLU), alineada con la configuración de entrenamiento original.
+This report updates the previous summary with the **newly retrained Transformer** and keeps all models in the same comparison table.
 
-## 📊 Resumen de Métricas
+## Updated Metrics (from latest tile logs)
 
-| Modelo | Parámetros | Best Val Loss | Best Val MAE |
-| :--- | :--- | :--- | :--- |
-| **LSTM** | ~4.61M | **0.2570** | **0.2280** |
-| **UNet** | ~1.96M | 0.2641 | 0.2364 |
-| **Mamba** | **~0.68M** | 0.2745 | 0.2351 |
+Source logs:
+- `experiments/logs/Tiles_UNET_log.csv`
+- `experiments/logs/Tiles_LSTM_log.csv`
+- `experiments/logs/Tiles_TRANSFORMER_log.csv`
+- `experiments/logs/Tiles_MAMBA_log.csv`
 
-### 💡 Hallazgos Principales
+| Model | Params | Epochs Logged | Best Val Loss | Best Val MAE |
+| :--- | ---: | ---: | ---: | ---: |
+| **MAMBA** | 676,641 | 35 | **0.044591** (ep 28) | **0.102873** (ep 28) |
+| **UNET** | 1,957,985 | 35 | 0.103750 (ep 34) | 0.182687 (ep 29) |
+| **LSTM** | 4,611,681 | 34 | 0.117599 (ep 32) | 0.201527 (ep 33) |
+| **TRANSFORMER (retrained)** | 1,072,225 | 35 | 0.127285 (ep 30) | 0.209561 (ep 30) |
 
-1.  **Costo-Beneficio de Mamba**: El modelo híbrido **Mamba** es sorprendentemente eficiente. Con solo **~680k parámetros** (aprox. 1/7 del tamaño de LSTM y 1/3 de UNet), logra un error (MAE 0.2351) comparable al de la UNet estándar (0.2364). Esto lo convierte en el candidato ideal para despliegue en dispositivos con recursos limitados.
-2.  **Precisión vs. Peso**: **LSTM** ofrece la mejor precisión absoluta (menor MAE y Loss), capturando mejor las dependencias temporales complejas, pero a costa de ser el modelo más pesado (~4.6M parámetros).
-3.  **Baseline**: La **UNet** estándar se mantiene como un punto medio sólido, pero es superada en eficiencia por Mamba y en precisión por LSTM.
+## Notes
 
----
+- The Transformer row above is the updated run (`Tiles_TRANSFORMER_log.csv`).
+- Ranking by validation loss in this run: **Mamba > UNet > LSTM > Transformer**.
+- Ranking by validation MAE in this run: **Mamba > UNet > LSTM > Transformer**.
 
-## 📈 Comparativa de Entrenamiento
+## Figures Explaining the Update
 
-A continuación se muestra la evolución de las métricas durante el entrenamiento para todos los modelos.
+### 1) Updated training dynamics (all models)
+![Updated curves](experiments/figures/tiles_ablation_updated_curves.png)
 
-![Comparativa de Modelos](experiments/figures/comparativa_final.png)
+### 2) Updated best-metric comparison
+![Updated best metrics](experiments/figures/tiles_ablation_updated_best_metrics.png)
 
----
+### 3) Updated Transformer qualitative map (retrained model)
+![Retrained transformer map](experiments/figures/tiles_post_train_publish_Tiles_TRANSFORMER_RETRAINED_PUB.png)
 
-## 🖼️ Resultados Individuales
+### 4) Unified 2x3 comparison panel (best for direct visual comparison)
+![Unified 2x3 panel](experiments/figures/tiles_model_comparison_panel_2x3.png)
 
-### 1. Hybrid UNet-LSTM (Mejor Desempeño)
-![Resultados LSTM](experiments/figures/result_Ablation_LSTM_Legacy.png)
+### 5) Hourly field evolution for the selected day (Transformer vs Ground Truth)
+![Hourly evolution GIF](experiments/figures/fig07_hourly_field_evolution_transformer_2017-08-15_retrained.gif)
+![Hourly evolution summary](experiments/figures/fig07_hourly_field_evolution_transformer_2017-08-15_retrained_summary.png)
 
-### 2. Standard UNet (Baseline)
-![Resultados UNet](experiments/figures/result_Ablation_UNET_Legacy.png)
+### 6) Hourly field evolution for the top-2 models (Mamba and UNet)
+![Mamba hourly evolution](experiments/figures/fig07_hourly_field_evolution_mamba_2017-08-15_best2.gif)
+![UNet hourly evolution](experiments/figures/fig07_hourly_field_evolution_unet_2017-08-15_best2.gif)
 
-### 3. Hybrid UNet-Mamba (Más Eficiente)
-![Resultados Mamba](experiments/figures/result_Ablation_MAMBA_Legacy.png)
+### 7) Side-by-side hourly animation (Mamba vs UNet vs Ground Truth)
+![Top-2 side-by-side hourly panel](experiments/figures/fig08_hourly_top2_side_by_side_mamba_unet_2017-08-15_best2.gif)
+![Top-2 hourly MAE summary](experiments/figures/fig08_hourly_top2_side_by_side_mamba_unet_2017-08-15_best2_summary.png)
+
+Quick read:
+- Daily mean MAE: **Mamba 0.1083** vs **UNet 0.1375**
+- Mamba is better in **22/24** hourly frames for this day

@@ -8,6 +8,7 @@ import gc
 import os
 import sys
 import subprocess
+import random
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
@@ -97,9 +98,21 @@ def main():
     parser.add_argument("--test-end", type=str, default=None)
     parser.add_argument("--post-inference", default=True, action=argparse.BooleanOptionalAction, help="Generate full-frame preview image after each model")
     parser.add_argument("--preview-time", type=str, default="2017-08-15T15:00:00", help="Timestamp for post-training preview")
+    parser.add_argument("--seed", type=int, default=None, help="Override random seed for reproducibility")
+    parser.add_argument("--experiment-suffix", type=str, default="", help="Suffix appended to experiment names (e.g. S42)")
     args = parser.parse_args()
 
     os.environ.setdefault("TF_GPU_ALLOCATOR", "cuda_malloc_async")
+
+    if args.seed is not None:
+        Config.SEED = int(args.seed)
+        random.seed(Config.SEED)
+        try:
+            import numpy as np
+            np.random.seed(Config.SEED)
+        except Exception:
+            pass
+        tf.random.set_seed(Config.SEED)
 
     # Tile config overrides
     Config.SEQ_LEN = args.seq_len
@@ -148,6 +161,7 @@ def main():
     print(f"   Sampler: {args.sampler}")
     print(f"   Steps/epoch: {steps_per_epoch}")
     print(f"   Models: {', '.join(args.models)}")
+    print(f"   Seed: {Config.SEED}")
     print(f"   SEQ_LEN: {Config.SEQ_LEN}")
     print(f"   BATCH_SIZE: {Config.BATCH_SIZE}")
     print(f"   Temporal sampler: {Config.TEMPORAL_SAMPLER}")
@@ -171,6 +185,7 @@ def main():
     validation_steps = max(1, Config.VAL_PATCHES_PER_EPOCH // max(1, Config.BATCH_SIZE))
 
     all_histories = {}
+    suffix = args.experiment_suffix.strip()
 
     for name in args.models:
         builder = EXPERIMENTS_TO_RUN[name]
@@ -178,6 +193,8 @@ def main():
         gc.collect()
 
         exp_name = f"Tiles_{name.upper()}"
+        if suffix:
+            exp_name = f"{exp_name}_{suffix}"
         print(f"\n{'='*60}")
         print(f"🏗️  MODELO: {name.upper()} (Tiles)")
         print(f"{'='*60}")
@@ -204,12 +221,12 @@ def main():
         if args.post_inference:
             model_path = os.path.join(Config.EXPERIMENTS_DIR, "models", f"{exp_name}_best.h5")
             run_post_inference(
-            model_type=name if name != "lstm" else "convlstm",
-            model_path=model_path,
-            patch_size=args.patch_size,
-            experiment_name=exp_name,
-            preview_time=args.preview_time,
-        )
+                model_type=name if name != "lstm" else "convlstm",
+                model_path=model_path,
+                patch_size=args.patch_size,
+                experiment_name=exp_name,
+                preview_time=args.preview_time,
+            )
 
     plot_comparative_history(all_histories, save_dir=os.path.join(Config.EXPERIMENTS_DIR, "figures"))
     notify_completion("Ablation tiles completada.")

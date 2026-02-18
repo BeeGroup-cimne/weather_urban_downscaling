@@ -22,6 +22,8 @@ def build_model(model_type: str):
         return ModelZoo.build_hybrid_unet_mamba(lr_shape=Config.LR_SHAPE, hr_shape=Config.HR_SHAPE)
     if model_type == "convlstm":
         return ModelZoo.build_hybrid_unet_lstm()
+    if model_type == "transformer":
+        return ModelZoo.build_transformer()
     return ModelZoo.build_unet()
 
 
@@ -34,24 +36,55 @@ def load_stats():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm"])
+    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm", "transformer"])
     parser.add_argument("--model-path", required=True)
+    parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--max-batches", type=int, default=0, help="0 = all")
     parser.add_argument("--ssim-samples", type=int, default=0, help="0 = skip SSIM")
+    parser.add_argument("--out-csv", default="", help="Optional CSV path to save metrics row.")
+    parser.add_argument("--split-mode", default="inherit", choices=["inherit", "time", "fraction"])
+    parser.add_argument("--split-fraction", type=float, default=None)
+    parser.add_argument("--train-start", type=str, default=None)
+    parser.add_argument("--train-end", type=str, default=None)
+    parser.add_argument("--val-start", type=str, default=None)
+    parser.add_argument("--val-end", type=str, default=None)
+    parser.add_argument("--test-start", type=str, default=None)
+    parser.add_argument("--test-end", type=str, default=None)
     args = parser.parse_args()
 
     if not os.path.exists(args.model_path):
         print(f"❌ Model not found: {args.model_path}")
         return 2
 
+    if args.split_mode != "inherit":
+        Config.SPLIT_MODE = args.split_mode
+    if args.split_fraction is not None:
+        Config.SPLIT_FRACTION = float(args.split_fraction)
+    if args.train_start is not None:
+        Config.TRAIN_START = args.train_start
+    if args.train_end is not None:
+        Config.TRAIN_END = args.train_end
+    if args.val_start is not None:
+        Config.VAL_START = args.val_start
+    if args.val_end is not None:
+        Config.VAL_END = args.val_end
+    if args.test_start is not None:
+        Config.TEST_START = args.test_start
+    if args.test_end is not None:
+        Config.TEST_END = args.test_end
+
     # Load stats for de-normalization
     mean_hr, std_hr = load_stats()
 
-    # Build pipeline and test dataset (updates Config shapes)
+    # Build pipeline and dataset (updates Config shapes)
     pipeline = BigDataPipeline(Config)
     pipeline.process_static_data()
     pipeline.run_etl_process()
-    _, _, test_ds = pipeline.get_tf_datasets(include_test=True)
+    if args.split == "test":
+        _, _, eval_ds = pipeline.get_tf_datasets(include_test=True)
+    else:
+        train_ds, val_ds = pipeline.get_tf_datasets()
+        eval_ds = train_ds if args.split == "train" else val_ds
 
     # Build and load model after Config shapes are updated
     model = build_model(args.model_type)
@@ -74,7 +107,7 @@ def main():
 
     max_batches = args.max_batches if args.max_batches and args.max_batches > 0 else None
 
-    for i, ((x_lr, x_st), y_true) in enumerate(test_ds):
+    for i, ((x_lr, x_st), y_true) in enumerate(eval_ds):
         if max_batches is not None and i >= max_batches:
             break
 
@@ -113,8 +146,30 @@ def main():
     print(f"   MAE:  {mae:.4f}")
     print(f"   RMSE: {rmse:.4f}")
     print(f"   MSE:  {mse:.4f}")
+    ssim_mean = float("nan")
     if ssim_count > 0:
-        print(f"   SSIM: {ssim_sum / ssim_count:.4f} (samples={ssim_count})")
+        ssim_mean = ssim_sum / ssim_count
+        print(f"   SSIM: {ssim_mean:.4f} (samples={ssim_count})")
+
+    if args.out_csv:
+        out_dir = os.path.dirname(args.out_csv)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        import csv
+        with open(args.out_csv, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["model_type", "model_path", "split", "mae", "rmse", "mse", "ssim", "ssim_samples"])
+            w.writerow([
+                args.model_type,
+                args.model_path,
+                args.split,
+                f"{mae:.6f}",
+                f"{rmse:.6f}",
+                f"{mse:.6f}",
+                "" if np.isnan(ssim_mean) else f"{ssim_mean:.6f}",
+                int(ssim_count),
+            ])
+        print(f"   CSV:  {args.out_csv}")
 
     return 0
 

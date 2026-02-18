@@ -36,6 +36,10 @@ def _order(vals):
 
 
 def build_model(model_type: str):
+    if model_type == "baseline_nearest":
+        return ModelZoo.build_lr_upsample_nearest()
+    if model_type == "baseline_bilinear":
+        return ModelZoo.build_lr_upsample_bilinear()
     if model_type == "mamba":
         return ModelZoo.build_hybrid_unet_mamba(lr_shape=Config.LR_SHAPE, hr_shape=Config.HR_SHAPE)
     if model_type == "convlstm":
@@ -80,8 +84,12 @@ def _resolve_lr_channel(da_lr, lr_var_dim, requested_channel):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm", "transformer"])
-    parser.add_argument("--model-path", required=True)
+    parser.add_argument(
+        "--model-type",
+        default="mamba",
+        choices=["mamba", "unet", "convlstm", "transformer", "baseline_nearest", "baseline_bilinear"],
+    )
+    parser.add_argument("--model-path", required=False, default=None)
     parser.add_argument("--patch-size", type=int, default=96)
     parser.add_argument("--stride", type=int, default=48, help="stride for sliding window (in HR pixels)")
     parser.add_argument("--batch-size", type=int, default=8, help="inference batch size")
@@ -99,6 +107,13 @@ def main():
     parser.add_argument("--experiment-name", default=None, help="label used in outputs and titles")
     parser.add_argument("--temp-cmap", default="inferno", help="Colormap for temperature-like fields")
     parser.add_argument("--error-cmap", default="magma", help="Colormap for absolute error panel")
+    parser.add_argument(
+        "--scale-from",
+        default="all",
+        choices=["all", "hr", "hr_lr"],
+        help="How to derive shared vmin/vmax for temperature panels: "
+             "'all'=LR+pred+HR (default), 'hr'=HR only, 'hr_lr'=LR+HR (stable across model comparisons).",
+    )
     parser.add_argument("--coastline", action="store_true", help="Overlay coastline (requires cartopy + coords)")
     parser.add_argument(
         "--coastline-resolution",
@@ -117,9 +132,11 @@ def main():
     parser.add_argument("--out", default=os.path.join("experiments", "figures", "tiles_fullframe_pred.png"))
     args = parser.parse_args()
 
-    if not os.path.exists(args.model_path):
-        print(f"❌ Model not found: {args.model_path}")
-        return 2
+    is_baseline = str(args.model_type).startswith("baseline_")
+    if not is_baseline:
+        if not args.model_path or not os.path.exists(args.model_path):
+            print(f"❌ Model not found: {args.model_path}")
+            return 2
     pct_low, pct_high = parse_percentile_range(args.percentiles, default=(2.0, 98.0))
 
     # Load dataset
@@ -215,7 +232,8 @@ def main():
 
     # Build model
     model = build_model(args.model_type)
-    model.load_weights(args.model_path)
+    if not is_baseline:
+        model.load_weights(args.model_path)
 
     weight = _make_weight_window(patch_h, patch_w)
     out_sum = np.zeros((hr_h, hr_w), dtype=np.float32)
@@ -281,8 +299,15 @@ def main():
     lr_up = tf.image.resize(lr_img[..., None], (hr_h, hr_w), method=args.lr_resample).numpy()[..., 0]
     abs_err = np.abs(full_pred - hr_last)
 
+    if args.scale_from == "hr":
+        scale_arrays = [hr_last]
+    elif args.scale_from == "hr_lr":
+        scale_arrays = [lr_up, hr_last]
+    else:
+        scale_arrays = [lr_up, full_pred, hr_last]
+
     vmin, vmax = robust_limits(
-        [lr_up, full_pred, hr_last],
+        scale_arrays,
         pct_low=pct_low,
         pct_high=pct_high,
         hard_min=args.vmin,
@@ -374,11 +399,12 @@ def main():
 
     metrics_path = os.path.join(out_dir, f"{base_name}_{exp_name}_metrics.csv")
     with open(metrics_path, "w", encoding="utf-8") as f:
-        f.write("experiment,model,mae,rmse,ssim,patch_size,stride,seq_len,temporal_stride,time_index,time\n")
+        f.write("experiment,model,mae,rmse,ssim,patch_size,stride,seq_len,temporal_stride,time_index,time,scale_from,pct_low,pct_high,vmin,vmax\n")
         f.write(
             f"{exp_name},{args.model_type},{mae:.6f},{rmse:.6f},{'' if ssim_val is None else f'{ssim_val:.6f}'},"
             f"{patch_h}x{patch_w},{stride},{seq_len},{temporal_stride},{t0},"
-            f"{pd.to_datetime(times[t0]).isoformat()}\n"
+            f"{pd.to_datetime(times[t0]).isoformat()},{args.scale_from},{pct_low:.3f},{pct_high:.3f},"
+            f"{'' if vmin is None else f'{vmin:.6f}'},{'' if vmax is None else f'{vmax:.6f}'}\n"
         )
     print(f"Saved {metrics_path}")
 

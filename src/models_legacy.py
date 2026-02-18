@@ -1,3 +1,4 @@
+import os
 import tensorflow as tf
 from tensorflow.keras.layers import (
     Input, Conv2D, MaxPooling2D, UpSampling2D, ConvLSTM2D,
@@ -17,7 +18,9 @@ class SimpleMambaBlock(layers.Layer):
     Sustituye Conv1D (buggy en Metal) por DepthwiseConv2D (estable).
     """
     def __init__(self, model_dim, d_state=16, d_conv=4, expand=2, **kwargs):
-        super().__init__(**kwargs)
+        # Use explicit super() to avoid AutoGraph edge-cases where implicit super()
+        # fails with KeyError('__class__') when traced.
+        super(SimpleMambaBlock, self).__init__(**kwargs)
         self.model_dim = model_dim
         self.d_inner = int(expand * model_dim)
         self.d_conv = d_conv
@@ -87,6 +90,107 @@ class SimpleMambaBlock(layers.Layer):
 # MODELOS (Arquitecturas)
 
 class ModelZoo:
+    @staticmethod
+    def _resolve_lr_var_index(default_var="t2m", default_idx=3):
+        """
+        Resolve LR channel index for baselines.
+        Priority:
+          1) BASELINE_LR_CHANNEL env (int)
+          2) BASELINE_LR_VAR env (name, resolved via stats_config.npz if available)
+          3) default_var via stats_config.npz
+          4) default_idx fallback
+        """
+        # 1) explicit channel
+        env_ch = os.getenv("BASELINE_LR_CHANNEL", "").strip()
+        if env_ch:
+            try:
+                return int(env_ch), f"channel_{int(env_ch)}"
+            except Exception:
+                pass
+
+        def _try_resolve_by_name(var_name: str):
+            if not var_name:
+                return None
+            var_name = str(var_name).strip().lower()
+            stats_path = getattr(Config, "STATS_PATH", None)
+            if not stats_path:
+                return None
+            try:
+                import numpy as np
+                if not os.path.exists(stats_path):
+                    return None
+                stats = np.load(stats_path, allow_pickle=True)
+                if "lr_var_names" not in stats:
+                    return None
+                names = [str(v) for v in np.asarray(stats["lr_var_names"]).tolist()]
+                names_low = [n.lower() for n in names]
+                if var_name in names_low:
+                    idx = names_low.index(var_name)
+                    return idx, names[idx]
+                partial = [i for i, n in enumerate(names_low) if var_name in n]
+                if partial:
+                    idx = partial[0]
+                    return idx, names[idx]
+            except Exception:
+                return None
+            return None
+
+        # 2) env var name
+        env_name = os.getenv("BASELINE_LR_VAR", "").strip()
+        resolved = _try_resolve_by_name(env_name) if env_name else None
+        if resolved is not None:
+            return resolved
+
+        # 3) default name
+        resolved = _try_resolve_by_name(default_var)
+        if resolved is not None:
+            return resolved
+
+        # 4) fallback index
+        return int(default_idx), f"channel_{int(default_idx)}"
+
+    @classmethod
+    def build_lr_upsample_baseline(cls, interpolation="nearest"):
+        """
+        Baseline: upsample LR -> HR without learning.
+
+        Notes:
+        - Keeps the same input signature as other models: (x_lr, x_static).
+        - Selects LR variable by name (default 't2m') when stats_config.npz is available,
+          else falls back to channel index 3.
+        - Static input is connected as a zero-tensor so the graph is not disconnected,
+          but it does not affect the output.
+        """
+        from config.runtime import Config
+        lr_c = int(getattr(Config, "CHANNELS", 9))
+        inp_dyn = Input(shape=(Config.SEQ_LEN, *Config.LR_SHAPE, lr_c), name="lr_input")
+        inp_st = Input(shape=(Config.SEQ_LEN, *Config.HR_SHAPE, Config.STATIC_CHANNELS), name="static_input")
+
+        lr_idx, lr_name = cls._resolve_lr_var_index(default_var="t2m", default_idx=3)
+        lr_idx = max(0, min(lr_idx, lr_c - 1))
+
+        x = layers.Lambda(lambda z, i=lr_idx: z[..., i:i + 1], name=f"select_lr_{lr_name}")(inp_dyn)
+        x_up = TimeDistributed(
+            Resizing(*Config.HR_SHAPE, interpolation=interpolation),
+            name=f"upsample_{interpolation}",
+        )(x)
+
+        # Connect static input without using it (avoid disconnected graph)
+        st_zero = layers.Lambda(lambda s: tf.zeros_like(s[..., :1]), name="static_zero")(inp_st)
+        out = Add(name="out")([x_up, st_zero])
+
+        model = Model([inp_dyn, inp_st], out, name=f"Baseline_Upsample_{interpolation}_{lr_name}")
+        model.compile(optimizer=cls.get_optimizer(Config.LEARNING_RATE), loss="mse", metrics=["mae", "mse"])
+        return model
+
+    @classmethod
+    def build_lr_upsample_nearest(cls):
+        return cls.build_lr_upsample_baseline(interpolation="nearest")
+
+    @classmethod
+    def build_lr_upsample_bilinear(cls):
+        return cls.build_lr_upsample_baseline(interpolation="bilinear")
+
     @staticmethod
     def _l2():
         wd = getattr(Config, "L2_WEIGHT_DECAY", 0.0)
