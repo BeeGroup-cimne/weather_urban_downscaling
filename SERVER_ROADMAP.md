@@ -1,72 +1,72 @@
-# Hoja de ruta (Servidor) — Full-frame + `scripts/run_ablation.py`
+# Server Roadmap — Full-frame + `scripts/run_ablation.py`
 
-## Objetivo
+## Goal
 
-Preparar el repositorio para subirlo a un servidor (idealmente con GPU), **sin incluir**:
-- Imágenes (figuras, diagramas, PNG/JPG, etc.)
-- Modelos entrenados (pesos `.h5`, checkpoints, etc.)
-- Outputs de `experiments/` (resultados previos)
+Prepare the repository for server deployment (ideally GPU), **excluding**:
+- images (figures, diagrams, PNG/JPG, etc.)
+- trained models (weights `.h5`, checkpoints, etc.)
+- prior `experiments/` outputs
 
-…pero **conservando la estructura** de carpetas para que el servidor pueda generar nuevos outputs al ejecutar.
+...while **preserving folder structure** so the server can generate new outputs at runtime.
 
-El **único entrypoint “definitivo”** de ejecución es:
-- `scripts/run_ablation.py` (4 modelos: `unet`, `lstm`, `transformer`, `mamba`)
+The only definitive execution entrypoint in this roadmap is:
+- `scripts/run_ablation.py` (4 models: `unet`, `lstm`, `transformer`, `mamba`)
 
-## Estructura del repo (cómo se usa en servidor)
+## Repository structure (server usage)
 
-- `config/`: configuración runtime (`config/runtime.py`) + defaults (`config/config.py`) + perfil GPU (`config/gpu_server_config.py`)
-- `src/`: pipeline full-frame (`src/data_loader.py`), modelos TF legacy (`src/models_legacy.py`), utilidades de entrenamiento (`src/utils/training.py`)
-- `scripts/`: entrypoints y utilidades; en servidor solo se necesita `scripts/run_ablation.py`
-- `docker/`: `docker/Dockerfile.tf` construye la imagen de entrenamiento TF
-- `data/`: **se monta en el servidor** (datasets/caches fuera del bundle)
-- `experiments/`: **se monta en el servidor** (logs/modelos/figuras generadas en runtime)
+- `config/`: runtime configuration (`config/runtime.py`) + defaults (`config/config.py`) + GPU profile (`config/gpu_server_config.py`)
+- `src/`: full-frame pipeline (`src/data_loader.py`), legacy TF models (`src/models_legacy.py`), training utilities (`src/utils/training.py`)
+- `scripts/`: entrypoints and utilities; in this server flow only `scripts/run_ablation.py` is required
+- `docker/`: `docker/Dockerfile.tf` builds the TF training image
+- `data/`: **mounted on server** (datasets/caches outside bundle)
+- `experiments/`: **mounted on server** (logs/models/figures generated at runtime)
 
-## Roadmap recomendado (orden eficiente)
+## Recommended roadmap (efficient order)
 
-1) Congelar el entrypoint de producción  
-   - Usar solo `scripts/run_ablation.py` y ejecutar los 4 modelos en orden.
-   - Evitar rutas alternativas (tiles, scripts de paper) en el flujo del servidor.
+1) Freeze production entrypoint  
+   - Use only `scripts/run_ablation.py` and run the 4 models in sequence.
+   - Avoid alternative paths (tiles, paper scripts) in this server flow.
 
-2) Full-frame (sin tiles) + epochs completos  
-   - Full-frame en este repo significa usar `BigDataPipeline` (no `TileDataPipeline`).
-   - Para evitar runs “capados”, forzar `FULLFRAME=1` en servidor.
+2) Full-frame (no tiles) + full epochs  
+   - In this repository, full-frame means using `BigDataPipeline` (not `TileDataPipeline`).
+   - To avoid capped runs, enforce `FULLFRAME=1` on server.
 
-3) Separar “código” vs “datos/resultados”  
-   - `data/` y `experiments/` se gestionan como volúmenes en el servidor.
-   - El repositorio que se sube no debe contener datasets ni outputs históricos.
+3) Separate code vs data/results  
+   - Manage `data/` and `experiments/` as server volumes.
+   - The uploaded repository should not include datasets or historical outputs.
 
-4) Empaquetado limpio para subir al servidor  
-   - Generar un bundle sin imágenes/modelos/experimentos previos:
+4) Clean packaging for server upload  
+   - Build a bundle without images/models/previous experiments:
      - `scripts/make_server_bundle.sh`
-   - Alternativa: `git clone` en servidor (y mantener `.gitignore` / `.dockerignore` como barrera).
+   - Alternative: `git clone` on server (with `.gitignore` / `.dockerignore` barriers).
 
-5) Ejecución en servidor (Docker Compose)  
-   - Usar `docker-compose.server-fullframe.yml` para correr el ablation full-frame con GPU config y sin generar figuras por defecto.
+5) Server execution (Docker Compose)  
+   - Use `docker-compose.server-fullframe.yml` to run full-frame ablation with GPU config and figures disabled by default.
 
-## Comandos (server-ready)
+## Commands (server-ready)
 
-### 1) Crear bundle para subir (sin imágenes/modelos/experiments)
+### 1) Create upload bundle (without images/models/experiments)
 ```bash
 ./scripts/make_server_bundle.sh
 ```
-Salida por defecto:
+Default output:
 - `dist/weather_urban_downscaling_server_bundle.tar.gz`
 
-### 2) En el servidor: descomprimir y montar datos
-Estructura mínima esperada (archivos reales van por fuera del bundle):
+### 2) On server: extract and mount data
+Minimum expected structure (actual files are outside the bundle):
 - `data/processed/estaciones_interpoladas_final.nc`
 - `data/processed/era5land/*.grib`
 - `data/processed/weather_static_FINAL_stations.zarr/`
 
-### 3) Ejecutar ablation full-frame (4 modelos)
+### 3) Run full-frame ablation (4 models)
 ```bash
 docker compose -f docker-compose.server-fullframe.yml up --build
 ```
 
-Por defecto, el compose setea:
+By default, compose sets:
 - `FULLFRAME=1`
 - `USE_GPU_CONFIG=1`
 - `SAVE_MODEL_DIAGRAM=0`, `SAVE_VISUALIZATIONS=0`, `SAVE_COMPARATIVE_HISTORY=0`
 
-Si quieres figuras en servidor, setea a `1` esas variables.
+If you need figures on server, set those variables to `1`.
 

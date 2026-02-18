@@ -80,13 +80,22 @@ class GPUServerConfig(Config):
         MIXED_PRECISION = True
         GRADIENT_ACCUMULATION_STEPS = 2
         
+    elif GPU_MEMORY_GB < 50:
+         # L40S / RTX 6000 Ada / A6000 (48GB VRAM)
+         # Optimized for 48GB: Can fit bigger batches without full A100 scale
+        BATCH_SIZE = 8
+        SEQ_LEN = 6
+        MODEL_DIM = 128
+        MIXED_PRECISION = True 
+        GRADIENT_ACCUMULATION_STEPS = 1
+         
     else:
-        # GPUs grandes (A100, RTX 4090, etc)
-        BATCH_SIZE = 2
+        # GPUs grandes (A100, H100, H200 > 80GB)
+        BATCH_SIZE = 16
         SEQ_LEN = 6
         MODEL_DIM = 128
         MIXED_PRECISION = True
-        GRADIENT_ACCUMULATION_STEPS = 4
+        GRADIENT_ACCUMULATION_STEPS = 1
 
     # Override: desactivar mixed precision para evitar loss scaling en loop custom
     MIXED_PRECISION = False

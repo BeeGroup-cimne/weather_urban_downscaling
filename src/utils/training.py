@@ -66,7 +66,7 @@ def plot_comparative_history(histories, save_dir):
 # 4. ENTRENAMIENTO Y VISUALIZACIÓN
 
 def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=None, validation_steps=None):
-    """Ejecuta el ciclo de entrenamiento estandarizado"""
+    """Ejecuta el ciclo de entrenamiento estandarizado con soporte de reanudación."""
     print(f"\n🧪 Iniciando {experiment_name}...")
 
     base_dir = Config.EXPERIMENTS_DIR
@@ -81,7 +81,28 @@ def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=Non
 
     log_path = os.path.join(log_dir, f"{experiment_name}_log.csv")
     model_path = os.path.join(model_dir, f"{experiment_name}_best.h5")
-    plot_path = os.path.join(fig_dir, f"{experiment_name}_architecture.png")   
+    last_ckpt_path = os.path.join(model_dir, f"{experiment_name}_last.h5")
+    plot_path = os.path.join(fig_dir, f"{experiment_name}_architecture.png")
+
+    # --- REANUDACIÓN DESDE CHECKPOINT ---
+    initial_epoch = 0
+    if os.path.exists(last_ckpt_path):
+        try:
+            model.load_weights(last_ckpt_path)
+            print(f"   🔄 Checkpoint encontrado: {last_ckpt_path}")
+            # Determinar la época desde el CSV log
+            if os.path.exists(log_path):
+                import pandas as _pd
+                df_log = _pd.read_csv(log_path)
+                if not df_log.empty:
+                    initial_epoch = int(df_log["epoch"].iloc[-1]) + 1
+                    print(f"   🔄 Reanudando desde época {initial_epoch}")
+            if initial_epoch >= Config.EPOCHS:
+                print(f"   ✅ Modelo ya completó {Config.EPOCHS} épocas. Saltando.")
+                return None
+        except Exception as e:
+            print(f"   ⚠️ No se pudo cargar checkpoint ({e}). Entrenando desde cero.")
+            initial_epoch = 0
 
     # -- GUARDAR IMAGEN DE LA ARQUITECTURA (OPCIONAL) ---
     if os.getenv("SAVE_MODEL_DIAGRAM", "1") == "1":
@@ -99,8 +120,6 @@ def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=Non
     else:
         print("ℹ️ SAVE_MODEL_DIAGRAM!=1. Saltando diagrama del modelo.")
 
-        
-
     # Callback knobs (configurable via Config overrides from scripts)
     es_patience = int(getattr(Config, "EARLY_STOPPING_PATIENCE", 8))
     es_min_delta = float(getattr(Config, "EARLY_STOPPING_MIN_DELTA", 0.0))
@@ -111,9 +130,12 @@ def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=Non
 
     # Callbacks
     callbacks = [
-        # Guardar solo el mejor modelo en la carpeta models/
+        # Guardar el mejor modelo
         ModelCheckpoint(model_path, save_best_only=True, monitor='val_loss', verbose=1),
-        
+
+        # Guardar último checkpoint cada época (para reanudación)
+        ModelCheckpoint(last_ckpt_path, save_best_only=False, verbose=0),
+
         # Detener si no mejora
         EarlyStopping(
             patience=es_patience,
@@ -122,21 +144,22 @@ def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=Non
             monitor='val_loss',
             start_from_epoch=es_start_from_epoch,
         ),
-        
+
         # Reducir Learning Rate
         ReduceLROnPlateau(factor=lr_factor, patience=lr_patience, min_lr=lr_min),
-        
-        # Guardar log CSV en la carpeta logs/
-        CSVLogger(log_path)
+
+        # Guardar log CSV (append=True para reanudación)
+        CSVLogger(log_path, append=(initial_epoch > 0))
     ]
 
     # --- 4. ENTRENAR ---
     fit_kwargs = {
         "epochs": Config.EPOCHS,
+        "initial_epoch": initial_epoch,
         "callbacks": callbacks,
         "verbose": 1
     }
-    
+
     if steps_per_epoch is None and getattr(Config, "MAX_STEPS_PER_EPOCH", None):
         steps_per_epoch = Config.MAX_STEPS_PER_EPOCH
         validation_steps = max(1, Config.MAX_STEPS_PER_EPOCH // 2)
@@ -145,17 +168,18 @@ def run_experiment(model, train_ds, val_ds, experiment_name, steps_per_epoch=Non
         fit_kwargs["steps_per_epoch"] = steps_per_epoch
     if validation_steps is not None:
         fit_kwargs["validation_steps"] = validation_steps
-    
+
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         **fit_kwargs
     )
-    
+
     print(f"✅ Experimento {experiment_name} finalizado.")
     print(f"   📄 Log guardado en: {log_path}")
-    print(f"   💾 Modelo guardado en: {model_path}")
-    
+    print(f"   💾 Mejor modelo en: {model_path}")
+    print(f"   💾 Último checkpoint en: {last_ckpt_path}")
+
     return history
 
 def visualize_results(model, val_ds, title):

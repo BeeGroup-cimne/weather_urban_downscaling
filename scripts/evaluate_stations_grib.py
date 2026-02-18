@@ -7,6 +7,7 @@ Generates per-station and summary tables + basic figures for paper.
 import argparse
 import os
 import sys
+from collections import defaultdict
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -109,6 +110,8 @@ def _build_model(model_type: str):
         return ModelZoo.build_hybrid_unet_mamba(lr_shape=Config.LR_SHAPE, hr_shape=Config.HR_SHAPE)
     if model_type == "convlstm":
         return ModelZoo.build_hybrid_unet_lstm()
+    if model_type == "transformer":
+        return ModelZoo.build_transformer()
     return ModelZoo.build_unet()
 
 
@@ -121,19 +124,45 @@ def _order(vals):
     return "unknown"
 
 
+def _hour_in_window(hour: int, start_hour: int, end_hour: int) -> bool:
+    if start_hour <= end_hour:
+        return start_hour <= hour <= end_hour
+    # Wrap-around window, e.g. 20..6
+    return hour >= start_hour or hour <= end_hour
+
+
+def _load_heatwave_times(path: str) -> pd.Index:
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            value = line.strip()
+            if not value or value.startswith("#"):
+                continue
+            rows.append(value)
+    if not rows:
+        return pd.Index([])
+    return pd.Index(pd.to_datetime(rows).floor("H"))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--stations-grib", required=True, help="GRIB file with station t2m")
     parser.add_argument("--stations-csv", default="", help="CSV with station_id,lat,lon (if GRIB is gridded)")
     parser.add_argument("--model-path", required=True)
-    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm"])
+    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm", "transformer"])
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--max-samples", type=int, default=200)
     parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument("--heatwave-times-file", default="", help="Optional text file with hourly timestamps (one per line).")
+    parser.add_argument("--day-start-hour", type=int, default=8, help="Daytime start hour (inclusive).")
+    parser.add_argument("--day-end-hour", type=int, default=19, help="Daytime end hour (inclusive).")
+    parser.add_argument("--time-offset-hours", type=float, default=0.0, help="Shift model timestamps before day/night split.")
     parser.add_argument("--out-dir", default=os.path.join("experiments", "stations_eval"))
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
+    if not (0 <= args.day_start_hour <= 23 and 0 <= args.day_end_hour <= 23):
+        raise ValueError("day-start-hour and day-end-hour must be in [0, 23].")
 
     # Load stations data
     st_times, st_ids, st_lat, st_lon, st_obs = _load_station_grib(
@@ -212,10 +241,22 @@ def main():
     model = _build_model(args.model_type)
     model.load_weights(args.model_path)
 
-    # Accumulators
-    pred_vals: Dict[str, List[float]] = {str(s): [] for s in st_ids}
-    hr_vals: Dict[str, List[float]] = {str(s): [] for s in st_ids}
-    obs_vals: Dict[str, List[float]] = {str(s): [] for s in st_ids}
+    # Segment configuration
+    heatwave_times = None
+    if args.heatwave_times_file:
+        if not os.path.exists(args.heatwave_times_file):
+            raise FileNotFoundError(f"heatwave times file not found: {args.heatwave_times_file}")
+        heatwave_times = _load_heatwave_times(args.heatwave_times_file)
+        print(f"ℹ️ Heatwave timestamps loaded: {len(heatwave_times)}")
+
+    # Accumulators by segment and station
+    segment_pred: Dict[str, List[float]] = defaultdict(list)
+    segment_hr: Dict[str, List[float]] = defaultdict(list)
+    segment_obs: Dict[str, List[float]] = defaultdict(list)
+
+    station_seg_pred: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
+    station_seg_hr: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
+    station_seg_obs: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
 
     seq_len = Config.SEQ_LEN
     used = 0
@@ -225,6 +266,14 @@ def main():
         t = times[last_idx]
         if t not in st_time_map:
             continue
+        t_eval = pd.to_datetime(t) + pd.to_timedelta(args.time_offset_hours, unit="h")
+        is_day = _hour_in_window(int(t_eval.hour), int(args.day_start_hour), int(args.day_end_hour))
+        segments = ["all", "day" if is_day else "night"]
+        if heatwave_times is not None:
+            is_hw = t in heatwave_times
+            hw_label = "heatwave" if is_hw else "non_heatwave"
+            segments.append(hw_label)
+            segments.append(f"{'day' if is_day else 'night'}_{hw_label}")
 
         # Build inputs
         x_lr = lr.isel(time=slice(i, i + seq_len)).values
@@ -252,9 +301,13 @@ def main():
             pred_val = float(y_pred[st_i[k], st_j[k]])
             hr_val = float(y_hr[st_i[k], st_j[k]])
             if np.isfinite(obs_val):
-                obs_vals[sid].append(obs_val)
-                pred_vals[sid].append(pred_val)
-                hr_vals[sid].append(hr_val)
+                for seg in segments:
+                    segment_obs[seg].append(obs_val)
+                    segment_pred[seg].append(pred_val)
+                    segment_hr[seg].append(hr_val)
+                    station_seg_obs[sid][seg].append(obs_val)
+                    station_seg_pred[sid][seg].append(pred_val)
+                    station_seg_hr[sid][seg].append(hr_val)
 
         used += 1
         if args.max_samples and used >= args.max_samples:
@@ -272,12 +325,18 @@ def main():
         corr = np.corrcoef(pred, obs)[0, 1] if len(obs) > 1 else np.nan
         return {"MAE": mae, "RMSE": rmse, "Bias": bias, "Corr": corr, "N": len(obs)}
 
-    # Per-station metrics
+    segment_order = [
+        "all", "day", "night", "heatwave", "non_heatwave",
+        "day_heatwave", "day_non_heatwave", "night_heatwave", "night_non_heatwave",
+    ]
+    available_segments = [s for s in segment_order if len(segment_obs.get(s, [])) > 0]
+
+    # Per-station metrics (overall)
     rows = []
     for sid in st_ids:
         sid = str(sid)
-        m_pred = _metrics(pred_vals[sid], obs_vals[sid])
-        m_hr = _metrics(hr_vals[sid], obs_vals[sid])
+        m_pred = _metrics(station_seg_pred[sid].get("all", []), station_seg_obs[sid].get("all", []))
+        m_hr = _metrics(station_seg_hr[sid].get("all", []), station_seg_obs[sid].get("all", []))
         rows.append({
             "station_id": sid,
             "MAE_model": m_pred["MAE"],
@@ -295,10 +354,35 @@ def main():
     per_station_path = os.path.join(args.out_dir, "stations_eval_per_station.csv")
     df.to_csv(per_station_path, index=False)
 
-    # Summary (global)
-    all_obs = np.concatenate([obs_vals[str(s)] for s in st_ids if len(obs_vals[str(s)]) > 0])
-    all_pred = np.concatenate([pred_vals[str(s)] for s in st_ids if len(pred_vals[str(s)]) > 0])
-    all_hr = np.concatenate([hr_vals[str(s)] for s in st_ids if len(hr_vals[str(s)]) > 0])
+    # Per-station metrics by segment
+    seg_rows = []
+    for sid in st_ids:
+        sid = str(sid)
+        for segment in available_segments:
+            m_pred = _metrics(station_seg_pred[sid].get(segment, []), station_seg_obs[sid].get(segment, []))
+            m_hr = _metrics(station_seg_hr[sid].get(segment, []), station_seg_obs[sid].get(segment, []))
+            if m_pred["N"] <= 0:
+                continue
+            seg_rows.append({
+                "station_id": sid,
+                "segment": segment,
+                "MAE_model": m_pred["MAE"],
+                "RMSE_model": m_pred["RMSE"],
+                "Bias_model": m_pred["Bias"],
+                "Corr_model": m_pred["Corr"],
+                "MAE_urbclim": m_hr["MAE"],
+                "RMSE_urbclim": m_hr["RMSE"],
+                "Bias_urbclim": m_hr["Bias"],
+                "Corr_urbclim": m_hr["Corr"],
+                "N": m_pred["N"],
+            })
+    per_station_segment_path = os.path.join(args.out_dir, "stations_eval_per_station_by_segment.csv")
+    pd.DataFrame(seg_rows).to_csv(per_station_segment_path, index=False)
+
+    # Summary (global / overall)
+    all_obs = np.array(segment_obs.get("all", []), dtype=np.float32)
+    all_pred = np.array(segment_pred.get("all", []), dtype=np.float32)
+    all_hr = np.array(segment_hr.get("all", []), dtype=np.float32)
 
     sum_pred = _metrics(all_pred, all_obs)
     sum_hr = _metrics(all_hr, all_obs)
@@ -319,6 +403,31 @@ def main():
     summary_path = os.path.join(args.out_dir, "stations_eval_summary.csv")
     summary.to_csv(summary_path, index=False)
 
+    # Summary by segment
+    summary_segments = []
+    for segment in available_segments:
+        seg_obs = np.array(segment_obs.get(segment, []), dtype=np.float32)
+        seg_pred = np.array(segment_pred.get(segment, []), dtype=np.float32)
+        seg_hr = np.array(segment_hr.get(segment, []), dtype=np.float32)
+        m_pred = _metrics(seg_pred, seg_obs)
+        m_hr = _metrics(seg_hr, seg_obs)
+        summary_segments.append({
+            "segment": segment,
+            "split": args.split,
+            "MAE_model": m_pred["MAE"],
+            "RMSE_model": m_pred["RMSE"],
+            "Bias_model": m_pred["Bias"],
+            "Corr_model": m_pred["Corr"],
+            "MAE_urbclim": m_hr["MAE"],
+            "RMSE_urbclim": m_hr["RMSE"],
+            "Bias_urbclim": m_hr["Bias"],
+            "Corr_urbclim": m_hr["Corr"],
+            "N": m_pred["N"],
+            "samples_used": used,
+        })
+    summary_segment_path = os.path.join(args.out_dir, "stations_eval_summary_by_segment.csv")
+    pd.DataFrame(summary_segments).to_csv(summary_segment_path, index=False)
+
     # Scatter plot
     fig, ax = plt.subplots(1, 2, figsize=(10, 4))
     ax[0].scatter(all_obs, all_pred, s=5, alpha=0.4)
@@ -335,9 +444,36 @@ def main():
     fig_path = os.path.join(args.out_dir, "stations_eval_scatter.png")
     fig.savefig(fig_path, dpi=200)
 
+    # Segment scatter (compact)
+    segment_plot = ["all", "day", "night"]
+    if heatwave_times is not None:
+        segment_plot += ["heatwave", "non_heatwave"]
+    segment_plot = [s for s in segment_plot if len(segment_obs.get(s, [])) > 0]
+    if segment_plot:
+        n = len(segment_plot)
+        fig2, axes = plt.subplots(1, n, figsize=(4.5 * n, 4))
+        if n == 1:
+            axes = [axes]
+        for axis, segment in zip(axes, segment_plot):
+            seg_obs = np.array(segment_obs.get(segment, []), dtype=np.float32)
+            seg_pred = np.array(segment_pred.get(segment, []), dtype=np.float32)
+            axis.scatter(seg_obs, seg_pred, s=4, alpha=0.35)
+            axis.set_title(f"{segment} (N={len(seg_obs)})")
+            axis.set_xlabel("Stations (°C)")
+            axis.set_ylabel("Model (°C)")
+        fig2.tight_layout()
+        fig2_path = os.path.join(args.out_dir, "stations_eval_scatter_segments.png")
+        fig2.savefig(fig2_path, dpi=200)
+    else:
+        fig2_path = ""
+
     print(f"✅ Per-station table: {per_station_path}")
+    print(f"✅ Per-station by segment: {per_station_segment_path}")
     print(f"✅ Summary table: {summary_path}")
+    print(f"✅ Summary by segment: {summary_segment_path}")
     print(f"✅ Scatter: {fig_path}")
+    if fig2_path:
+        print(f"✅ Segment scatter: {fig2_path}")
 
     return 0
 
