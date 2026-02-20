@@ -1,0 +1,28 @@
+codi_estacio,nom_estacio,nom_municipi,nom_comarca,nom_provincia,latitud,longitud,altitud,nom_xarxa,nom_estat_ema,data_inici
+UF,PN del Garraf - el Rascler,Begues,Baix Llobregat,Barcelona,41.28832,1.90775,573,XEMA,Operativa,1996-02-29T00:00:00.000
+Y7,Port de Barcelona - Bocana Sud,El Prat de Llobregat,Baix Llobregat,Barcelona,41.31725,2.16537,3,XEMA,Operativa,2015-04-08T00:00:00.000
+YQ,Port de Barcelona - ZAL Prat,El Prat de Llobregat,Baix Llobregat,Barcelona,41.31928,2.1372,6,XEMA,Operativa,2021-12-02T00:00:00.000
+XL,el Prat de Llobregat,El Prat de Llobregat,Baix Llobregat,Barcelona,41.34045,2.08022,8,XEMA,Operativa,2011-03-22T00:00:00.000
+D3,Vallirana,Vallirana,Baix Llobregat,Barcelona,41.38197,1.93564,252,XEMA,Operativa,1995-10-28T00:00:00.000
+UG,Viladecans,Viladecans,Baix Llobregat,Barcelona,41.29928,2.03787,3,XEMA,Operativa,1993-04-29T00:00:00.000
+WU,Badalona - Museu,Badalona,Barcelonès,Barcelona,41.45215,2.24757,42,XEMA,Operativa,2005-09-21T00:00:00.000
+D5,Barcelona - Observatori Fabra,Barcelona,Barcelonès,Barcelona,41.41864,2.12379,411,XEMA,Operativa,1995-11-03T00:00:00.000
+X8,Barcelona - Zona Universitària,Barcelona,Barcelonès,Barcelona,41.37919,2.1054,79,XEMA,Operativa,2008-04-17T00:00:00.000
+X4,Barcelona - el Raval,Barcelona,Barcelonès,Barcelona,41.3839,2.16775,33,XEMA,Operativa,2006-10-11T00:00:00.000
+UP,Cabrils,Cabrils,Maresme,Barcelona,41.51773,2.37702,81,XEMA,Operativa,1995-11-27T00:00:00.000
+UQ,Dosrius - PN Montnegre Corredor,Dosrius,Maresme,Barcelona,41.61991,2.44532,460,XEMA,Operativa,1996-08-09T00:00:00.000
+WT,Malgrat de Mar,Malgrat de Mar,Maresme,Barcelona,41.64707,2.75658,2,XEMA,Operativa,2005-05-04T00:00:00.000
+YV,Mataró,Mataró,Maresme,Barcelona,41.54517,2.43322,87,XEMA,Operativa,2025-06-11T00:00:00.000
+XC,Castellbisbal,Castellbisbal,Vallès Occidental,Barcelona,41.47892,1.97546,147,XEMA,Operativa,2008-03-18T00:00:00.000
+VU,Rellinars,Rellinars,Vallès Occidental,Barcelona,41.63286,1.91718,421,XEMA,Operativa,1998-02-18T00:00:00.000
+XF,Sabadell - Parc Agrari,Sabadell,Vallès Occidental,Barcelona,41.56568,2.06952,258,XEMA,Operativa,2008-10-23T00:00:00.000
+XV,Sant Cugat del Vallès - CAR,Sant Cugat del Vallès,Vallès Occidental,Barcelona,41.48311,2.07956,158,XEMA,Operativa,2013-08-08T00:00:00.000
+VV,Sant Llorenç Savall,Sant Llorenç Savall,Vallès Occidental,Barcelona,41.68129,2.02647,528,XEMA,Operativa,1998-03-25T00:00:00.000
+YK,Terrassa,Terrassa,Vallès Occidental,Barcelona,41.55361,1.99005,313,XEMA,Operativa,2018-12-20T00:00:00.000
+D2,Vacarisses,Vacarisses,Vallès Occidental,Barcelona,41.59252,1.915,343,XEMA,Operativa,1996-02-15T00:00:00.000
+X9,Caldes de Montbui,Caldes de Montbui,Vallès Oriental,Barcelona,41.61265,2.16836,176,XEMA,Operativa,2007-03-08T00:00:00.000
+XK,Puig Sesolles (1.668 m),Fogars de Montclús,Vallès Oriental,Barcelona,41.77362,2.43774,1668,XEMA,Operativa,2010-09-22T00:00:00.000
+YM,Granollers,Granollers,Vallès Oriental,Barcelona,41.60922,2.29841,210,XEMA,Operativa,2019-09-17T00:00:00.000
+KX,la Roca del Vallès - ETAP Cardedeu,La Roca del Vallès,Vallès Oriental,Barcelona,41.61865,2.36114,156,XEMA,Operativa,1996-01-05T00:00:00.000
+XG,Parets del Vallès,Parets del Vallès,Vallès Oriental,Barcelona,41.56734,2.22619,123,XEMA,Operativa,2008-10-30T00:00:00.000
+VX,Tagamanent - PN del Montseny,Tagamanent,Vallès Oriental,Barcelona,41.74761,2.30291,1030,XEMA,Operativa,1996-01-04T00:00:00.000

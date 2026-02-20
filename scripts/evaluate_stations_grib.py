@@ -26,7 +26,7 @@ from src.models_legacy import ModelZoo
 
 
 def _time_index(values):
-    return pd.to_datetime(values).floor("H")
+    return pd.to_datetime(values).floor("h")
 
 
 def _find_var(ds, preferred):
@@ -105,6 +105,63 @@ def _load_station_grib(path: str, stations_csv: str = ""):
     return times, station_ids, stations_df["lat"].values, stations_df["lon"].values, obs.values
 
 
+def _load_station_obs_csv(path: str):
+    df = pd.read_csv(path)
+    required = {"time", "station_id", "lat", "lon"}
+    if not required.issubset(df.columns):
+        missing = sorted(required - set(df.columns))
+        raise ValueError(f"stations-obs-csv missing columns: {', '.join(missing)}")
+
+    value_col = None
+    for candidate in ["obs_c", "t2m_c", "air_temperature_c", "temperature_c", "value_c"]:
+        if candidate in df.columns:
+            value_col = candidate
+            break
+    if value_col is None:
+        raise ValueError(
+            "stations-obs-csv must include one of: obs_c, t2m_c, air_temperature_c, temperature_c, value_c"
+        )
+
+    df = df.copy()
+    df["time"] = pd.to_datetime(df["time"], errors="coerce").dt.floor("h")
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+    df = df.dropna(subset=["time", "station_id", "lat", "lon", value_col])
+    df["station_id"] = df["station_id"].astype(str)
+    if df.empty:
+        raise ValueError("stations-obs-csv has no valid rows after parsing.")
+
+    # Collapse duplicates per station-hour (e.g. 30-min source data) to hourly mean.
+    df = (
+        df.groupby(["time", "station_id", "lat", "lon"], as_index=False)[value_col]
+        .mean()
+        .rename(columns={value_col: "obs_c"})
+    )
+
+    sample_mean = float(df["obs_c"].mean())
+    if sample_mean > 200.0:
+        df["obs_c"] = df["obs_c"] - 273.15
+
+    st_meta = df.groupby("station_id", as_index=False)[["lat", "lon"]].first()
+    st_meta = st_meta.sort_values("station_id").reset_index(drop=True)
+    station_ids = st_meta["station_id"].values
+    lat = st_meta["lat"].values
+    lon = st_meta["lon"].values
+
+    times = pd.Index(sorted(df["time"].unique()))
+    time_pos = {t: i for i, t in enumerate(times)}
+    st_pos = {sid: i for i, sid in enumerate(station_ids)}
+    obs = np.full((len(times), len(station_ids)), np.nan, dtype=np.float32)
+
+    for row in df.itertuples(index=False):
+        i = time_pos[row.time]
+        j = st_pos[row.station_id]
+        obs[i, j] = float(row.obs_c)
+
+    return times, station_ids, lat, lon, obs
+
+
 def _build_model(model_type: str):
     if model_type == "mamba":
         return ModelZoo.build_hybrid_unet_mamba(lr_shape=Config.LR_SHAPE, hr_shape=Config.HR_SHAPE)
@@ -141,12 +198,17 @@ def _load_heatwave_times(path: str) -> pd.Index:
             rows.append(value)
     if not rows:
         return pd.Index([])
-    return pd.Index(pd.to_datetime(rows).floor("H"))
+    return pd.Index(pd.to_datetime(rows).floor("h"))
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stations-grib", required=True, help="GRIB file with station t2m")
+    parser.add_argument("--stations-grib", default="", help="GRIB file with station t2m")
+    parser.add_argument(
+        "--stations-obs-csv",
+        default="",
+        help="CSV observations in long format with columns: time,station_id,lat,lon and obs_c (or alias).",
+    )
     parser.add_argument("--stations-csv", default="", help="CSV with station_id,lat,lon (if GRIB is gridded)")
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm", "transformer"])
@@ -163,11 +225,18 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     if not (0 <= args.day_start_hour <= 23 and 0 <= args.day_end_hour <= 23):
         raise ValueError("day-start-hour and day-end-hour must be in [0, 23].")
+    if not args.stations_grib and not args.stations_obs_csv:
+        raise ValueError("Provide either --stations-grib or --stations-obs-csv.")
+    if args.stations_grib and args.stations_obs_csv:
+        print("ℹ️ Both stations-grib and stations-obs-csv were provided. Using stations-obs-csv.")
 
     # Load stations data
-    st_times, st_ids, st_lat, st_lon, st_obs = _load_station_grib(
-        args.stations_grib, args.stations_csv
-    )
+    if args.stations_obs_csv:
+        st_times, st_ids, st_lat, st_lon, st_obs = _load_station_obs_csv(args.stations_obs_csv)
+    else:
+        st_times, st_ids, st_lat, st_lon, st_obs = _load_station_grib(
+            args.stations_grib, args.stations_csv
+        )
     st_time_index = pd.Index(st_times)
     st_time_map = {t: i for i, t in enumerate(st_time_index)}
 
@@ -211,10 +280,11 @@ def main():
 
     # Split indices
     def _time_indices(times_idx, start, end):
-        start = pd.to_datetime(start)
-        end = pd.to_datetime(end)
-        start_i = int(np.searchsorted(times_idx.values, start, side="left"))
-        end_i = int(np.searchsorted(times_idx.values, end, side="left"))
+        arr = np.asarray(times_idx.values).astype("datetime64[ns]")
+        start_dt = np.datetime64(pd.to_datetime(start).to_datetime64())
+        end_dt = np.datetime64(pd.to_datetime(end).to_datetime64())
+        start_i = int(np.searchsorted(arr, start_dt, side="left"))
+        end_i = int(np.searchsorted(arr, end_dt, side="left"))
         return start_i, end_i
 
     if args.split == "train":

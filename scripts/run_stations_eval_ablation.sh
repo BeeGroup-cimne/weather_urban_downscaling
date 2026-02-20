@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 export USE_GPU_CONFIG="${USE_GPU_CONFIG:-1}"
 export MPLBACKEND="${MPLBACKEND:-Agg}"
+export TF_USE_LEGACY_KERAS="${TF_USE_LEGACY_KERAS:-1}"
 
 if [[ -z "${PYTHON_BIN:-}" ]]; then
   if [[ -x "/opt/miniconda3/envs/ml_m4/bin/python" ]]; then
@@ -20,6 +21,7 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
 fi
 
 STATIONS_GRIB="${STATIONS_GRIB:-}"
+STATIONS_OBS_CSV="${STATIONS_OBS_CSV:-}"
 STATIONS_CSV="${STATIONS_CSV:-}"
 HEATWAVE_TIMES_FILE="${HEATWAVE_TIMES_FILE:-}"
 MODELS="${MODELS:-unet lstm transformer mamba}"
@@ -36,25 +38,39 @@ CKPT_LSTM="${CKPT_LSTM:-}"
 CKPT_TRANSFORMER="${CKPT_TRANSFORMER:-}"
 CKPT_MAMBA="${CKPT_MAMBA:-}"
 
-if [[ $# -gt 0 && -z "${STATIONS_GRIB}" ]]; then
-  STATIONS_GRIB="$1"
+if [[ $# -gt 0 && -z "${STATIONS_GRIB}" && -z "${STATIONS_OBS_CSV}" ]]; then
+  case "$1" in
+    *.csv) STATIONS_OBS_CSV="$1" ;;
+    *) STATIONS_GRIB="$1" ;;
+  esac
   shift
 fi
 
-if [[ -z "${STATIONS_GRIB}" ]]; then
-  echo "Usage: STATIONS_GRIB=/path/stations.grib scripts/run_stations_eval_ablation.sh" >&2
+if [[ -z "${STATIONS_GRIB}" && -z "${STATIONS_OBS_CSV}" ]]; then
+  echo "Usage (GRIB): STATIONS_GRIB=/path/stations.grib scripts/run_stations_eval_ablation.sh" >&2
+  echo "Usage (CSV):  STATIONS_OBS_CSV=/path/stations_obs.csv scripts/run_stations_eval_ablation.sh" >&2
   echo "   or: scripts/run_stations_eval_ablation.sh /path/stations.grib" >&2
+  echo "   or: scripts/run_stations_eval_ablation.sh /path/stations_obs.csv" >&2
   exit 1
 fi
 
-if [[ ! -f "${STATIONS_GRIB}" ]]; then
+if [[ -n "${STATIONS_GRIB}" && ! -f "${STATIONS_GRIB}" ]]; then
   echo "Stations GRIB not found: ${STATIONS_GRIB}" >&2
+  exit 1
+fi
+
+if [[ -n "${STATIONS_OBS_CSV}" && ! -f "${STATIONS_OBS_CSV}" ]]; then
+  echo "Stations observations CSV not found: ${STATIONS_OBS_CSV}" >&2
   exit 1
 fi
 
 if [[ -n "${STATIONS_CSV}" && ! -f "${STATIONS_CSV}" ]]; then
   echo "stations CSV not found: ${STATIONS_CSV}" >&2
   exit 1
+fi
+
+if [[ -n "${STATIONS_OBS_CSV}" && -n "${STATIONS_CSV}" ]]; then
+  echo "ℹ️ STATIONS_CSV ignored when STATIONS_OBS_CSV is provided."
 fi
 
 if [[ -n "${HEATWAVE_TIMES_FILE}" && ! -f "${HEATWAVE_TIMES_FILE}" ]]; then
@@ -136,7 +152,6 @@ run_one() {
 
   local cmd=(
     "${PYTHON_BIN}" scripts/evaluate_stations_grib.py
-    --stations-grib "${STATIONS_GRIB}"
     --model-path "${ckpt}"
     --model-type "${model_type}"
     --split "${SPLIT}"
@@ -144,6 +159,12 @@ run_one() {
     --stride "${STRIDE}"
     --out-dir "${model_out}"
   )
+  if [[ -n "${STATIONS_GRIB}" ]]; then
+    cmd+=(--stations-grib "${STATIONS_GRIB}")
+  fi
+  if [[ -n "${STATIONS_OBS_CSV}" ]]; then
+    cmd+=(--stations-obs-csv "${STATIONS_OBS_CSV}")
+  fi
   if [[ -n "${STATIONS_CSV}" ]]; then
     cmd+=(--stations-csv "${STATIONS_CSV}")
   fi
