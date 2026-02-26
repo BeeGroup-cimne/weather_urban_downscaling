@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 export USE_GPU_CONFIG="${USE_GPU_CONFIG:-1}"
 export FULLFRAME="${FULLFRAME:-1}"
@@ -28,6 +28,9 @@ MODELS="${MODELS:-transformer mamba}"
 SEEDS="${SEEDS:-42 43 44}"
 MIN_SEQ_LEN="${MIN_SEQ_LEN:-6}"
 EPOCHS="${EPOCHS:-35}"
+SKIP_TRAINING="${SKIP_TRAINING:-0}"
+CKPT_PREFIX="${CKPT_PREFIX:-Ablation_@MODEL@_Legacy_}"
+export CKPT_PREFIX
 
 TRAIN_START="${TRAIN_START:-2017-05-01}"
 TRAIN_END="${TRAIN_END:-2017-08-01}"
@@ -88,38 +91,46 @@ echo "   Output dir: ${OUTDIR}"
   echo "EVAL_MAX_BATCHES=${EVAL_MAX_BATCHES}"
   echo "EVAL_SSIM_SAMPLES=${EVAL_SSIM_SAMPLES}"
   echo "EXP1_AGG_CSV=${EXP1_AGG_CSV}"
+  echo "SKIP_TRAINING=${SKIP_TRAINING}"
+  echo "CKPT_PREFIX=${CKPT_PREFIX}"
 } > "${OUTDIR}/run_config.env"
 
 for seed in "${SEEDS_ARR[@]}"; do
   for model in "${MODELS_ARR[@]}"; do
     model_u="$(to_upper "${model}")"
     suffix="S${seed}"
-    ckpt="experiments/models/Ablation_${model_u}_Legacy_${suffix}_best.h5"
+    ckpt_prefix="${CKPT_PREFIX//@MODEL@/${model_u}}"
+    ckpt="experiments/models/${ckpt_prefix}${suffix}_best.h5"
     eval_type="$(model_type_for_eval "${model}")"
     eval_csv="${OUTDIR}/evals/${model}_${suffix}.csv"
 
-    echo "=== TRAIN full-frame: model=${model} seed=${seed} ==="
-    train_status="ok"
-    if ! "${PYTHON_BIN}" scripts/run_ablation.py \
-      --models "${model}" \
-      --min-seq-len "${MIN_SEQ_LEN}" \
-      --seed "${seed}" \
-      --experiment-suffix "${suffix}" \
-      --epochs "${EPOCHS}" \
-      --split-mode time \
-      --train-start "${TRAIN_START}" \
-      --train-end "${TRAIN_END}" \
-      --val-start "${VAL_START}" \
-      --val-end "${VAL_END}" \
-      --test-start "${TEST_START}" \
-      --test-end "${TEST_END}"; then
-      train_status="failed"
+    if [[ "${SKIP_TRAINING}" == "1" ]]; then
+      echo "=== SKIP TRAIN (eval-only): model=${model} seed=${seed} ckpt=${ckpt} ==="
+      train_status="skipped"
+    else
+      echo "=== TRAIN full-frame: model=${model} seed=${seed} ==="
+      train_status="ok"
+      if ! "${PYTHON_BIN}" scripts/ablation/run_ablation.py \
+        --models "${model}" \
+        --min-seq-len "${MIN_SEQ_LEN}" \
+        --seed "${seed}" \
+        --experiment-suffix "${suffix}" \
+        --epochs "${EPOCHS}" \
+        --split-mode time \
+        --train-start "${TRAIN_START}" \
+        --train-end "${TRAIN_END}" \
+        --val-start "${VAL_START}" \
+        --val-end "${VAL_END}" \
+        --test-start "${TEST_START}" \
+        --test-end "${TEST_END}"; then
+        train_status="failed"
+      fi
     fi
 
     eval_status="skipped"
     if [[ -f "${ckpt}" ]]; then
       echo "=== EVAL full-frame: model=${model} seed=${seed} split=${EVAL_SPLIT} ==="
-      if "${PYTHON_BIN}" scripts/evaluate_test_set.py \
+      if "${PYTHON_BIN}" scripts/evaluation/evaluate_test_set.py \
         --model-type "${eval_type}" \
         --model-path "${ckpt}" \
         --split "${EVAL_SPLIT}" \
@@ -169,7 +180,8 @@ with open(train_path, "w", newline="", encoding="utf-8") as f:
     for model in models:
         model_u = model.upper()
         for seed in seeds:
-            log_path = os.path.join("experiments", "logs", f"Ablation_{model_u}_Legacy_S{seed}_log.csv")
+            ckpt_prefix = os.environ.get("CKPT_PREFIX", "Ablation_@MODEL@_Legacy_").replace("@MODEL@", model_u)
+            log_path = os.path.join("experiments", "logs", f"{ckpt_prefix}S{seed}_log.csv")
             if not os.path.exists(log_path):
                 w.writerow([model, seed, 0, "", "", "", "", "", "", ""])
                 continue
@@ -216,7 +228,7 @@ if [[ -z "${EXP1_AGG_CSV}" ]]; then
 fi
 
 consolidate_cmd=(
-  "${PYTHON_BIN}" scripts/consolidate_experiment3.py
+  "${PYTHON_BIN}" scripts/evaluation/consolidate_experiment3.py
   --out-dir "${OUTDIR}"
   --eval-raw-csv "${RAW_CSV}"
   --training-summary-csv "${OUTDIR}/fullframe_training_summary.csv"

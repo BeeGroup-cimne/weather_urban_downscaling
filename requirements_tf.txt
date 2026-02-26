@@ -1,5 +1,5 @@
-tensorflow[and-cuda]>=2.15.0
-numpy
+tensorflow[and-cuda]>=2.15.0,<2.16
+numpy>=1.24,<2.0
 pandas
 xarray
 zarr
@@ -9,6 +9,7 @@ fsspec
 h5py
 matplotlib
 scikit-learn
+scikit-image
 tqdm
 tf_keras
 netcdf4

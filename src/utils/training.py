@@ -298,7 +298,11 @@ def visualize_results(model, val_ds, title):
             return vmin, vmax
 
         plt.subplot(1, 3, 1)
-        # x_lr shape: (Batch, Time, Lat, Lon, Chan)
+        # x_lr shape: (Batch, Time, Lat, Lon, Chan) -> We extract the temperature channel
+        # En el BigDataPipeline y configuracion, Temperatura suele ser el primer canal (0) o el último si se agrega al final.
+        # Basado en la config usual, vamos a tratar de asegurar que sacamos T2m, pero extraer [:, :, 0] es estándar para T2M. 
+        # Modifico el código para asegurarme de que plotea solo el canal de temperatura (LR Native).
+        
         lr_raw = x_lr[idx, t, :, :, 0]
         if hasattr(lr_raw, "numpy"):
             lr_raw = lr_raw.numpy()
@@ -314,26 +318,16 @@ def visualize_results(model, val_ds, title):
         print(f"   ℹ️ LR display alignment: {lr_tag}")
         temp_cmap = os.getenv("PLOT_TEMP_CMAP", "inferno")
         temp_vmin, temp_vmax = _robust_limits([lr_disp, pred_ref, hr_ref])
-        plot_lr_native = os.getenv("PLOT_LR_NATIVE", "1") == "1"
-        if plot_lr_native:
-            lr_native = _apply_transform(lr_raw, lr_tag)
-            plt.imshow(
-                _rotate(lr_native),
-                cmap=temp_cmap,
-                origin='lower',
-                interpolation='nearest',
-                vmin=temp_vmin,
-                vmax=temp_vmax,
-            )
-        else:
-            plt.imshow(
-                _rotate(lr_disp),
-                cmap=temp_cmap,
-                origin='lower',
-                interpolation='nearest',
-                vmin=temp_vmin,
-                vmax=temp_vmax,
-            )
+        # ALWAYS use lr_disp (which is upsampled via nearest neighbor to HR_SHAPE)
+        # This ensures the physical square is exactly the same size as HR but shows the 5x4 blocky pixels.
+        plt.imshow(
+            _rotate(lr_disp),
+            cmap=temp_cmap,
+            origin='lower',
+            interpolation='nearest',
+            vmin=temp_vmin,
+            vmax=temp_vmax,
+        )
         plt.title("Input Low Res (LR)")
         plt.axis('off')
 

@@ -10,7 +10,7 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
 
-from config.config import Config
+from config.runtime import Config
 
 # CONFIGURACIÓN - Rutas portables del proyecto
 # 

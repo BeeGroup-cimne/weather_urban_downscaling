@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # =============================================================
+  # Experiment 3 (re-run): Eval-only with 4 Tiles-trained models
+  # =============================================================
+  tf-exp3-eval:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tf
+    image: weather_thesis:tf
+    container_name: weather_tf_exp3_eval
+    volumes:
+      - ./:/app
+      - ./data:/app/data
+      - ./experiments:/app/experiments
+    environment:
+      - TF_USE_LEGACY_KERAS=1
+      - PYTHONUNBUFFERED=1
+      - MPLBACKEND=Agg
+      - CUDA_VISIBLE_DEVICES=0
+      - TF_GPU_ALLOCATOR=cuda_malloc_async
+      # Config
+      - USE_GPU_CONFIG=1
+      - FULLFRAME=1
+      - SAVE_MODEL_DIAGRAM=0
+      - SAVE_VISUALIZATIONS=0
+      - SAVE_COMPARATIVE_HISTORY=0
+      # Experiment 3 eval-only with Tiles checkpoints
+      - MODELS=unet lstm transformer mamba
+      - SEEDS=42
+      - SKIP_TRAINING=1
+      - CKPT_PREFIX=Tiles_@MODEL@_
+      - EPOCHS=50
+      - EVAL_SSIM_SAMPLES=128
+      # Cross-reference experiment 1
+      - EXP1_AGG_CSV=experiments/heatwaves/publish_run_20260220_220458/metrics_aggregate_ci.csv
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '8gb'
+    command: bash scripts/run_experiment3_fullframe_replica.sh
+    restart: "no"

@@ -16,7 +16,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(PROJECT_ROOT)
 
 from config.runtime import Config
-from scripts.fig07_hourly_field_evolution import (
+from scripts.figures.fig07_hourly_field_evolution import (
     _build_model,
     _find_dims,
     _order,

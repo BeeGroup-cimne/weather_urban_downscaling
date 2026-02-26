@@ -75,7 +75,7 @@ class GPUServerConfig(Config):
     elif GPU_MEMORY_GB < 24:
         # GPUs medianas (RTX 3080, etc)
         BATCH_SIZE = 2
-        SEQ_LEN = 6
+        SEQ_LEN = 12
         MODEL_DIM = 128
         MIXED_PRECISION = True
         GRADIENT_ACCUMULATION_STEPS = 2

@@ -115,3 +115,7 @@ scripts/generate_paper_block_diagrams.py
 scripts/generate_paper_figure3_like.py
 scripts/generate_paper_flow_figures.py
 scripts/generate_paper_figures.py
+
+# Local/Server runs
+experiments/
+scripts/experiments/

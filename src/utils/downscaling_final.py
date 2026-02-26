@@ -37,7 +37,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, PROJECT_ROOT)
 
 # Import central config
-from config.config import Config as CentralConfig
+from config.runtime import Config as CentralConfig
 
 # ==========================================
 # 1. CONFIGURACIÓN GLOBAL (Extiende Config central)
