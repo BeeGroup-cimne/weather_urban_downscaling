@@ -19,6 +19,7 @@ except ImportError:
 
 # Importar configuración
 from config.runtime import Config
+from src.data.base_pipeline import TemporalSamplerMixin
 
 class OptimizedBigDataPipeline:
     def __init__(self, config=None):
@@ -168,13 +169,7 @@ class OptimizedBigDataPipeline:
                 self.config.HR_SHAPE = (real_hr_h, real_hr_w)
 
             # Detect longitude order mismatch and align LR with HR
-            def _order(vals):
-                diffs = np.diff(vals)
-                if np.all(diffs > 0):
-                    return "asc"
-                if np.all(diffs < 0):
-                    return "desc"
-                return "unknown"
+            _order = TemporalSamplerMixin.order_values
 
             try:
                 lr_lon_vals = ds[lr_lon].values
@@ -229,13 +224,8 @@ class OptimizedBigDataPipeline:
             season_balance = bool(getattr(self.config, "TEMPORAL_SEASON_BALANCE", False))
             rng = np.random.default_rng(getattr(self.config, "SEED", 42))
 
-            def _time_indices(times, start, end):
-                times = pd.to_datetime(times).values
-                start = np.datetime64(start)
-                end = np.datetime64(end)
-                start_idx = int(np.searchsorted(times, start, side="left"))
-                end_idx = int(np.searchsorted(times, end, side="left"))
-                return start_idx, end_idx
+            # Uses shared mixin
+            _time_indices = TemporalSamplerMixin.time_indices
 
             test_start = test_end = None
             if getattr(self.config, "SPLIT_MODE", "fraction") == "time":
@@ -333,13 +323,8 @@ class OptimizedBigDataPipeline:
             time_weights = _build_time_weights()
             times_pd = pd.to_datetime(ds[lr_time].values)
 
-            def _season_index(times_idx):
-                months = times_idx.month
-                seasons = np.zeros_like(months)
-                seasons[(months >= 3) & (months <= 5)] = 1
-                seasons[(months >= 6) & (months <= 8)] = 2
-                seasons[(months >= 9) & (months <= 11)] = 3
-                return seasons
+            # Uses shared mixin
+            _season_index = TemporalSamplerMixin.season_index
 
             seasons = _season_index(times_pd)
 

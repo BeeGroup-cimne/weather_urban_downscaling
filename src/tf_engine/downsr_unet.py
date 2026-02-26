@@ -6,7 +6,7 @@ from tensorflow.keras.layers import (
 )
 from tensorflow.keras.models import Model
 import tensorflow as tf
-from config.config import Config
+from config.runtime import Config
 from .blocks import conv_block, res_block, SimpleMambaBlock, temporal_transformer_block
 
 class DownsrUNet:

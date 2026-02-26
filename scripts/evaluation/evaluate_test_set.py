@@ -50,11 +50,15 @@ def main():
     parser.add_argument("--val-end", type=str, default=None)
     parser.add_argument("--test-start", type=str, default=None)
     parser.add_argument("--test-end", type=str, default=None)
+    parser.add_argument("--seq-len", type=int, default=None)
     args = parser.parse_args()
 
     if not os.path.exists(args.model_path):
         print(f"❌ Model not found: {args.model_path}")
         return 2
+
+    if args.seq_len is not None:
+        Config.SEQ_LEN = args.seq_len
 
     if args.split_mode != "inherit":
         Config.SPLIT_MODE = args.split_mode

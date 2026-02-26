@@ -11,7 +11,8 @@ from dask.diagnostics import ProgressBar
 from scipy.interpolate import NearestNDInterpolator
 import os
 import pandas as pd
-from config.config import Config
+from config.runtime import Config
+from src.data.base_pipeline import TemporalSamplerMixin
 
 
 class BigDataPipeline:
@@ -642,14 +643,8 @@ class BigDataPipeline:
             print(f"   ⚠️ CORRECCIÓN HR_SHAPE: {self.cfg.HR_SHAPE} -> ({real_hr_h}, {real_hr_w}).")
             self.cfg.HR_SHAPE = (real_hr_h, real_hr_w)
 
-        # Detectar orientación de longitudes y alinear LR con HR si es necesario
-        def _order(vals):
-            diffs = np.diff(vals)
-            if np.all(diffs > 0):
-                return "asc"
-            if np.all(diffs < 0):
-                return "desc"
-            return "unknown"
+        # Detectar orientación de longitudes (uses shared mixin)
+        _order = TemporalSamplerMixin.order_values
 
         try:
             lr_lon_vals = ds[lr_lon].values
@@ -769,13 +764,8 @@ class BigDataPipeline:
 
         time_weights = _build_time_weights()
 
-        def _time_indices(times, start, end):
-            times = pd.to_datetime(times).values
-            start = np.datetime64(start)
-            end = np.datetime64(end)
-            start_idx = int(np.searchsorted(times, start, side="left"))
-            end_idx = int(np.searchsorted(times, end, side="left"))
-            return start_idx, end_idx
+        # Uses shared mixin
+        _time_indices = TemporalSamplerMixin.time_indices
 
         test_start = test_end = None
         if getattr(self.cfg, "SPLIT_MODE", "fraction") == "time":
@@ -821,14 +811,8 @@ class BigDataPipeline:
             test_samples = max(1, max_start_test - test_start)
             self.test_steps = max(1, test_samples // max(1, self.cfg.BATCH_SIZE))
 
-        def _season_index(times_idx):
-            # DJF=0, MAM=1, JJA=2, SON=3
-            months = times_idx.month
-            seasons = np.zeros_like(months)
-            seasons[(months >= 3) & (months <= 5)] = 1
-            seasons[(months >= 6) & (months <= 8)] = 2
-            seasons[(months >= 9) & (months <= 11)] = 3
-            return seasons
+        # Uses shared mixin
+        _season_index = TemporalSamplerMixin.season_index
 
         times_pd = pd.to_datetime(ds["time"].values)
         seasons = _season_index(times_pd)

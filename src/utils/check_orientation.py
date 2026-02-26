@@ -12,7 +12,7 @@ sys.path.insert(0, PROJECT_ROOT)
 import xarray as xr
 import matplotlib.pyplot as plt
 import numpy as np
-from config.config import Config
+from config.runtime import Config
 
 # Use project-relative path
 CACHE_DIR = Config.PATH_CACHE

@@ -79,9 +79,6 @@ scripts/evaluate_*.py
 scripts/feature_audit_correlation.py
 scripts/overfit_*.py
 scripts/repair_zarr_nans.py
-scripts/run_ablation_tiles*.py
-scripts/run_ablation_tiles_heatwave_caffeinate.sh
-scripts/run_inference*.py
 scripts/run_mamba_seq*.py
 scripts/run_p95_eval_caffeinate.sh
 scripts/train_tiles*.py

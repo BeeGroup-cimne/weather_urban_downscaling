@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # =============================================================
+  # Experiment 1: Tiles Heatwave Ablation (UNet + LSTM + Transformer + Mamba)
+  # =============================================================
+  tf-tiles-heatwave:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tf
+    image: weather_thesis:tf
+    container_name: weather_tf_tiles_heatwave
+    volumes:
+      - ./:/app
+      - ./data:/app/data
+      - ./experiments:/app/experiments
+    environment:
+      - TF_USE_LEGACY_KERAS=1
+      - PYTHONUNBUFFERED=1
+      - MPLBACKEND=Agg
+      - CUDA_VISIBLE_DEVICES=0
+      - TF_GPU_ALLOCATOR=cuda_malloc_async
+      # Config server
+      - USE_GPU_CONFIG=1
+      # Experiment parameters
+      - MODELS=unet lstm transformer mamba
+      - SEEDS=42
+      - EPOCHS=50
+      - BATCH_SIZE=8
+      - PATCHES_PER_EPOCH=6000
+      - VAL_PATCHES=2400
+      - EARLY_STOPPING_PATIENCE=8
+      - EARLY_STOPPING_START_EPOCH=4
+      - EARLY_STOPPING_MIN_DELTA=0.001
+      - LR_PATIENCE=3
+      - LR_FACTOR=0.5
+      - LR_MIN=1e-6
+      - INFER_BATCH=32
+      - STRIDE=48
+      # Disable figures to save time
+      - SAVE_MODEL_DIAGRAM=0
+      - SAVE_VISUALIZATIONS=0
+      - SAVE_COMPARATIVE_HISTORY=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '8gb'
+    command: bash scripts/run_ablation_tiles_heatwave_server.sh
+    restart: "no"

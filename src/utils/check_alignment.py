@@ -13,7 +13,7 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import numpy as np
 import cv2
-from config.config import Config
+from config.runtime import Config
 
 # Use project-relative path
 CACHE_DIR = Config.PATH_CACHE

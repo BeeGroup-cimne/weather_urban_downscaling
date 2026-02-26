@@ -219,7 +219,6 @@ def main():
         # Sin embargo, si ya terminó (época final alcanzada), run_experiment retornará None.
         if os.path.exists(model_path_best) and os.path.exists(log_path):
             try:
-                import pandas as pd
                 df_log = pd.read_csv(log_path)
                 if not df_log.empty and df_log["epoch"].iloc[-1] >= (Config.EPOCHS - 1):
                     print(f"✅ Experimento {experiment_name} ya completado ({len(df_log)} épocas). Saltando.")
@@ -303,7 +302,6 @@ def main():
             print(f"⏭️ Experimento {experiment_name} omitido (ya completado o error).")
             # Intentar recuperar logs para el resumen
             if os.path.exists(log_path):
-                import pandas as pd
                 history_df = pd.read_csv(log_path)
                 all_histories[strategy_name] = history_df
                 # Add to summary if not already added

@@ -8,6 +8,7 @@ import tensorflow as tf
 
 from config.runtime import Config
 from src.data_loader import BigDataPipeline
+from src.data.base_pipeline import TemporalSamplerMixin
 
 
 class TileDataPipeline:
@@ -266,14 +267,8 @@ class TileDataPipeline:
         static = self._load_static((hr_h, hr_w))
         self.cfg.STATIC_CHANNELS = static.shape[-1]
 
-        # Orientation check (lon order)
-        def _order(vals):
-            diffs = np.diff(vals)
-            if np.all(diffs > 0):
-                return "asc"
-            if np.all(diffs < 0):
-                return "desc"
-            return "unknown"
+        # Orientation check (lon order) — uses shared mixin
+        _order = TemporalSamplerMixin.order_values
 
         flip_lr_lon = False
         try:
@@ -294,13 +289,8 @@ class TileDataPipeline:
             print(f"⚠️ TEMPORAL_STRIDE ({stride}) > SEQ_LEN ({seq_len}). Usando stride={seq_len}.")
             stride = seq_len
 
-        def _time_indices(times, start, end):
-            times = pd.to_datetime(times).values
-            start = np.datetime64(start)
-            end = np.datetime64(end)
-            start_idx = int(np.searchsorted(times, start, side="left"))
-            end_idx = int(np.searchsorted(times, end, side="left"))
-            return start_idx, end_idx
+        # Uses shared mixin
+        _time_indices = TemporalSamplerMixin.time_indices
 
         if getattr(self.cfg, "SPLIT_MODE", "fraction") == "time":
             times = ds[lr_time].values
@@ -323,14 +313,8 @@ class TileDataPipeline:
         season_balance = bool(getattr(self.cfg, "TEMPORAL_SEASON_BALANCE", False))
         times_pd = pd.to_datetime(ds[lr_time].values)
 
-        def _season_index(times_idx):
-            # DJF=0, MAM=1, JJA=2, SON=3
-            months = times_idx.month
-            seasons = np.zeros_like(months)
-            seasons[(months >= 3) & (months <= 5)] = 1
-            seasons[(months >= 6) & (months <= 8)] = 2
-            seasons[(months >= 9) & (months <= 11)] = 3
-            return seasons
+        # Uses shared mixin
+        _season_index = TemporalSamplerMixin.season_index
 
         seasons = _season_index(times_pd)
 
