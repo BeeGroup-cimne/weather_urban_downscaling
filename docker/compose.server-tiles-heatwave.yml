@@ -6,14 +6,14 @@ services:
   # =============================================================
   tf-tiles-heatwave:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_tf_tiles_heatwave
     volumes:
       - ./:/app
-      - ./data:/app/data
-      - ./experiments:/app/experiments
+      - ../data:/app/data
+      - ../experiments:/app/experiments
     environment:
       - TF_USE_LEGACY_KERAS=1
       - PYTHONUNBUFFERED=1
@@ -47,7 +47,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     shm_size: '8gb'
     command: bash scripts/run_ablation_tiles_heatwave_server.sh
     restart: "no"

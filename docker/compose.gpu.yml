@@ -6,16 +6,16 @@ services:
   # =============================================================
   tf-trainer:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_tf_trainer
     volumes:
-      - ./:/app
+      - ../:/app
       # Mount data directory (must contain your datasets)
-      - ./data:/app/data
+      - ../data:/app/data
       # Mount experiments to persist outputs
-      - ./experiments:/app/experiments
+      - ../experiments:/app/experiments
     environment:
       - TF_USE_LEGACY_KERAS=1
       - PYTHONUNBUFFERED=1
@@ -33,17 +33,12 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     # Shared memory para PyTorch multiprocessing
     shm_size: '8gb'
     # Command con configuración optimizada
     command: >
-      python -c "import sys; sys.path.append('/app');
-      from config.gpu_server_config import GPUServerConfig;
-      GPUServerConfig.print_memory_info();
-      from src.optimized_data_pipeline import OptimizedBigDataPipeline;
-      from scripts.gpu_server_train import train_gpu_optimized;
-      train_gpu_optimized()"
+      python -c "import sys; sys.path.append('/app'); from config.gpu_server_config import GPUServerConfig; GPUServerConfig.print_memory_info(); from src.optimized_data_pipeline import OptimizedBigDataPipeline; from scripts.gpu_server_train import train_gpu_optimized; train_gpu_optimized()"
     restart: "no"
     profiles:
       - training
@@ -54,13 +49,13 @@ services:
   # =============================================================
   transformer-trainer:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:transformer
     container_name: weather_transformer_trainer
     volumes:
-      - ./data:/app/data
-      - ./experiments:/app/experiments
+      - ../data:/app/data
+      - ../experiments:/app/experiments
     environment:
       - PYTHONUNBUFFERED=1
       - TF_USE_LEGACY_KERAS=1
@@ -71,13 +66,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 32G  # Transformers necesitan memoria para attention
+          memory: 32G # Transformers necesitan memoria para attention
           cpus: '8'
         reservations:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     shm_size: '8gb'
     command: >
       python scripts/train_transformer.py
@@ -85,19 +80,19 @@ services:
     profiles:
       - training
       - gpu
-      
+
   # =============================================================
   # PyTorch Trainer Optimizado para GPU Server (Mamba)
   # =============================================================
   torch-trainer:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.torch
     image: weather_thesis:torch
     container_name: weather_torch_trainer
     volumes:
-      - ./data:/app/data
-      - ./experiments:/app/experiments
+      - ../data:/app/data
+      - ../experiments:/app/experiments
     environment:
       - PYTHONUNBUFFERED=1
       - MPLCONFIGDIR=/tmp
@@ -107,14 +102,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 48G  # Más memoria para Mamba
+          memory: 48G # Más memoria para Mamba
           cpus: '12'
         reservations:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
-    shm_size: '16gb'  # Más shared memory para Mamba
+              capabilities: [ gpu ]
+    shm_size: '16gb' # Más shared memory para Mamba
     command: >
       python scripts/torch_gpu_train.py
     restart: "no"
@@ -127,14 +122,14 @@ services:
   # =============================================================
   data-prep:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_data_prep
     volumes:
-      - ./:/app
-      - ./data:/app/data
-      - ./experiments:/app/experiments
+      - ../:/app
+      - ../data:/app/data
+      - ../experiments:/app/experiments
     environment:
       - PYTHONUNBUFFERED=1
       - MPLCONFIGDIR=/tmp
@@ -155,13 +150,13 @@ services:
   # =============================================================
   memory-monitor:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:monitor
     container_name: weather_memory_monitor
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./experiments:/app/experiments
+      - ../experiments:/app/experiments
     environment:
       - PYTHONUNBUFFERED=1
     deploy:
@@ -169,9 +164,7 @@ services:
         limits:
           memory: 2G
     command: >
-      python -c "
-      import time, subprocess, json, os;
-      while True:
+      python -c " import time, subprocess, json, os; while True:
           try:
               # GPU Memory
               result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'], 
@@ -203,14 +196,14 @@ services:
   # =============================================================
   jupyter:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:jupyter
     container_name: weather_jupyter
     volumes:
-      - ./data:/app/data
-      - ./experiments:/app/experiments
-      - ./:/app/notebooks
+      - ../data:/app/data
+      - ../experiments:/app/experiments
+      - ../:/app/notebooks
     environment:
       - PYTHONUNBUFFERED=1
       - JUPYTER_ENABLE_LAB=yes
@@ -223,16 +216,12 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     ports:
       - "8888:8888"
     shm_size: '4gb'
     command: >
-      bash -c "
-      pip install jupyter jupyterlab;
-      cd /app;
-      jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
-      "
+      bash -c " pip install jupyter jupyterlab; cd /app; jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' "
     restart: "no"
     profiles:
       - development

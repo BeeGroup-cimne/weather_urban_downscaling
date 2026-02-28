@@ -6,15 +6,15 @@ services:
   # =============================================================
   tf-trainer:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_tf_trainer
     volumes:
       # Mount data directory (must contain your datasets)
-      - ./data:/app/data
+      - ../data:/app/data
       # Mount experiments to persist outputs
-      - ./experiments:/app/experiments
+      - ../experiments:/app/experiments
     environment:
       - TF_USE_LEGACY_KERAS=1
       - PYTHONUNBUFFERED=1
@@ -61,12 +61,12 @@ services:
   # =============================================================
   data-prep:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_data_prep
     volumes:
-      - ./data:/app/data
+      - ../data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
     command: >

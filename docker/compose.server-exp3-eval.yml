@@ -6,14 +6,14 @@ services:
   # =============================================================
   tf-exp3-eval:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_tf_exp3_eval
     volumes:
       - ./:/app
-      - ./data:/app/data
-      - ./experiments:/app/experiments
+      - ../data:/app/data
+      - ../experiments:/app/experiments
     environment:
       - TF_USE_LEGACY_KERAS=1
       - PYTHONUNBUFFERED=1
@@ -41,7 +41,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     shm_size: '8gb'
     command: bash scripts/run_experiment3_fullframe_replica.sh
     restart: "no"
