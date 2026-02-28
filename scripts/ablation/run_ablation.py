@@ -1,8 +1,11 @@
 import os
 
-# Forzar compatibilidad con tf_keras (Keras 2) sobre TensorFlow 2.16+
-# Debe establecerse ANTES de importar TensorFlow/Keras.
-os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+# NOTE:
+# Do not force legacy Keras globally here. Local environments with TF 2.15
+# can fail importing `tensorflow.keras` when `TF_USE_LEGACY_KERAS=1`.
+# Keep behavior configurable from the runtime environment (Docker/Compose).
+if os.getenv("FORCE_TF_LEGACY_KERAS", "0") == "1":
+    os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
 import argparse
 import gc
@@ -14,8 +17,9 @@ import tensorflow as tf
 from tensorflow.keras.backend import clear_session
 
 # --- AJUSTE DE RUTAS ---
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(PROJECT_ROOT)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # IMPORTS DEL PROYECTO (ALINEADOS CON TRAIN.PY)
 from src.models_legacy import ModelZoo # <--- Usamos Legacy Models (ReLU, No-BN)

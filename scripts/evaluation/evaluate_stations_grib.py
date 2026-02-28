@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import xarray as xr
 import tensorflow as tf
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
 
 from config.runtime import Config
@@ -163,6 +163,10 @@ def _load_station_obs_csv(path: str):
 
 
 def _build_model(model_type: str):
+    if model_type == "baseline_nearest":
+        return ModelZoo.build_lr_upsample_nearest()
+    if model_type == "baseline_bilinear":
+        return ModelZoo.build_lr_upsample_bilinear()
     if model_type == "mamba":
         return ModelZoo.build_hybrid_unet_mamba(lr_shape=Config.LR_SHAPE, hr_shape=Config.HR_SHAPE)
     if model_type == "convlstm":
@@ -210,11 +214,17 @@ def main():
         help="CSV observations in long format with columns: time,station_id,lat,lon and obs_c (or alias).",
     )
     parser.add_argument("--stations-csv", default="", help="CSV with station_id,lat,lon (if GRIB is gridded)")
-    parser.add_argument("--model-path", required=True)
-    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm", "transformer"])
+    parser.add_argument("--model-path", default="", help="Path to model checkpoint (not needed for baselines).")
+    parser.add_argument("--model-type", default="mamba", choices=["mamba", "unet", "convlstm", "transformer", "baseline_nearest", "baseline_bilinear"])
+    parser.add_argument("--baseline", action="store_true", help="Skip weight loading (for baseline models with no learned weights).")
+    parser.add_argument("--seq-len", type=int, default=0, help="Override Config.SEQ_LEN for checkpoint compatibility.")
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--max-samples", type=int, default=200)
     parser.add_argument("--stride", type=int, default=1)
+    parser.add_argument("--extraction-method", default="bilinear", choices=["nearest", "bilinear"],
+                        help="How to extract grid values at station locations (default: bilinear).")
+    parser.add_argument("--bias-correction", action="store_true",
+                        help="Calibrate per-station bias on val split and subtract from test predictions.")
     parser.add_argument("--heatwave-times-file", default="", help="Optional text file with hourly timestamps (one per line).")
     parser.add_argument("--day-start-hour", type=int, default=8, help="Daytime start hour (inclusive).")
     parser.add_argument("--day-end-hour", type=int, default=19, help="Daytime end hour (inclusive).")
@@ -266,17 +276,69 @@ def main():
     except Exception:
         pass
 
-    # Map stations to HR grid indices (nearest)
+    # Map stations to HR grid indices
     hr_lat_dim = next(d for d in hr.dims if d in ["latitude", "lat", "y"])
     hr_lon_dim = next(d for d in hr.dims if d in ["longitude", "lon", "x"])
     hr_lat_vals = z[hr_lat_dim].values
     hr_lon_vals = z[hr_lon_dim].values
+    n_lat, n_lon = len(hr_lat_vals), len(hr_lon_vals)
 
     def _nearest_idx(arr, val):
         return int(np.argmin(np.abs(arr - val)))
 
     st_i = np.array([_nearest_idx(hr_lat_vals, v) for v in st_lat])
     st_j = np.array([_nearest_idx(hr_lon_vals, v) for v in st_lon])
+
+    # Precompute bilinear interpolation weights
+    use_bilinear = args.extraction_method == "bilinear"
+    if use_bilinear:
+        def _frac_idx(arr, val):
+            """Return fractional index (float) of val in sorted arr."""
+            idx = np.searchsorted(arr, val) - 1
+            idx = max(0, min(idx, len(arr) - 2))
+            span = arr[idx + 1] - arr[idx]
+            frac = (val - arr[idx]) / span if abs(span) > 1e-12 else 0.0
+            return idx, float(np.clip(frac, 0, 1))
+
+        lat_sorted = np.sort(hr_lat_vals)
+        lon_sorted = np.sort(hr_lon_vals)
+        lat_rev = hr_lat_vals[0] > hr_lat_vals[-1] if len(hr_lat_vals) > 1 else False
+        lon_rev = hr_lon_vals[0] > hr_lon_vals[-1] if len(hr_lon_vals) > 1 else False
+
+        bilin_i0 = np.zeros(len(st_lat), dtype=int)
+        bilin_j0 = np.zeros(len(st_lon), dtype=int)
+        bilin_dy = np.zeros(len(st_lat), dtype=float)
+        bilin_dx = np.zeros(len(st_lon), dtype=float)
+
+        for k in range(len(st_lat)):
+            iy, fy = _frac_idx(lat_sorted, st_lat[k])
+            jx, fx = _frac_idx(lon_sorted, st_lon[k])
+            if lat_rev:
+                iy = (len(hr_lat_vals) - 2) - iy
+                fy = 1.0 - fy
+            if lon_rev:
+                jx = (len(hr_lon_vals) - 2) - jx
+                fx = 1.0 - fx
+            bilin_i0[k] = max(0, min(iy, n_lat - 2))
+            bilin_j0[k] = max(0, min(jx, n_lon - 2))
+            bilin_dy[k] = fy
+            bilin_dx[k] = fx
+
+        print(f"ℹ️ Using bilinear extraction for station values")
+    else:
+        print(f"ℹ️ Using nearest-neighbor extraction for station values")
+
+    def _extract_val(grid, k):
+        """Extract value from 2D grid at station k using chosen method."""
+        if use_bilinear:
+            i0, j0 = int(bilin_i0[k]), int(bilin_j0[k])
+            dy, dx = bilin_dy[k], bilin_dx[k]
+            v00 = float(grid[i0, j0])
+            v01 = float(grid[i0, j0 + 1])
+            v10 = float(grid[i0 + 1, j0])
+            v11 = float(grid[i0 + 1, j0 + 1])
+            return v00 * (1 - dy) * (1 - dx) + v01 * (1 - dy) * dx + v10 * dy * (1 - dx) + v11 * dy * dx
+        return float(grid[st_i[k], st_j[k]])
 
     # Split indices
     def _time_indices(times_idx, start, end):
@@ -307,9 +369,18 @@ def main():
     mean_hr = float(stats["mean_hr"])
     std_hr = float(stats["std_hr"])
 
+    if args.seq_len and args.seq_len > 0:
+        Config.SEQ_LEN = int(args.seq_len)
+        print(f"ℹ️ Using overridden sequence length: {Config.SEQ_LEN}")
+
     # Build model
+    is_baseline = args.baseline or str(args.model_type).startswith("baseline_")
     model = _build_model(args.model_type)
-    model.load_weights(args.model_path)
+    if not is_baseline:
+        if not args.model_path or not os.path.exists(args.model_path):
+            print(f"❌ Model checkpoint not found: {args.model_path}")
+            return 1
+        model.load_weights(args.model_path)
 
     # Segment configuration
     heatwave_times = None
@@ -329,6 +400,57 @@ def main():
     station_seg_obs: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
 
     seq_len = Config.SEQ_LEN
+
+    # --- Bias correction: calibration pass on val split ---
+    station_bias_model: Dict[str, float] = {}  # per-station bias for model
+    station_bias_hr: Dict[str, float] = {}     # per-station bias for UrbClim
+    if args.bias_correction:
+        val_start_i, val_end_i = _time_indices(times, Config.VAL_START, Config.VAL_END)
+        print(f"\n📐 Bias calibration pass on val split [{val_start_i}:{val_end_i}] ...")
+        cal_errors_model: Dict[str, List[float]] = defaultdict(list)
+        cal_errors_hr: Dict[str, List[float]] = defaultdict(list)
+        cal_used = 0
+        for i in range(val_start_i, val_end_i - seq_len, args.stride):
+            last_idx = i + seq_len - 1
+            t = times[last_idx]
+            if t not in st_time_map:
+                continue
+            x_lr = lr.isel(time=slice(i, i + seq_len)).values
+            if flip_lr_lon:
+                x_lr = x_lr[:, :, ::-1, :]
+            x_st = np.broadcast_to(static_norm[np.newaxis, ...], (seq_len, *static_norm.shape))
+            x_lr_b = np.expand_dims(x_lr, 0).astype(np.float32)
+            x_st_b = np.expand_dims(x_st, 0).astype(np.float32)
+            y_pred = model((x_lr_b, x_st_b), training=False).numpy()[0, -1, :, :, 0]
+            y_pred = y_pred * std_hr + mean_hr
+            y_hr = hr.isel(time=last_idx).values
+            if y_hr.ndim > 2:
+                y_hr = y_hr[..., 0]
+            y_hr = y_hr * std_hr + mean_hr
+            obs_idx = st_time_map[t]
+            obs_t = st_obs[obs_idx]
+            for k, sid in enumerate(st_ids):
+                sid = str(sid)
+                obs_val = float(obs_t[k])
+                if np.isfinite(obs_val):
+                    cal_errors_model[sid].append(_extract_val(y_pred, k) - obs_val)
+                    cal_errors_hr[sid].append(_extract_val(y_hr, k) - obs_val)
+            cal_used += 1
+            if args.max_samples and cal_used >= args.max_samples:
+                break
+        for sid in cal_errors_model:
+            station_bias_model[sid] = float(np.mean(cal_errors_model[sid]))
+            station_bias_hr[sid] = float(np.mean(cal_errors_hr[sid]))
+        global_bias_model = float(np.mean([v for v in station_bias_model.values()]))
+        global_bias_hr = float(np.mean([v for v in station_bias_hr.values()]))
+        print(f"   ✅ Calibrated {len(station_bias_model)} stations ({cal_used} timesteps)")
+        print(f"   📊 Mean bias – Model: {global_bias_model:.3f}°C, UrbClim: {global_bias_hr:.3f}°C")
+        # Save bias table
+        bias_rows = [{"station_id": s, "bias_model": station_bias_model[s], "bias_hr": station_bias_hr.get(s, 0.0)}
+                     for s in sorted(station_bias_model.keys())]
+        pd.DataFrame(bias_rows).to_csv(os.path.join(args.out_dir, "station_bias_calibration.csv"), index=False)
+
+    # --- Main evaluation loop ---
     used = 0
 
     for i in range(start_i, end_i - seq_len, args.stride):
@@ -368,8 +490,8 @@ def main():
         for k, sid in enumerate(st_ids):
             sid = str(sid)
             obs_val = float(obs_t[k])
-            pred_val = float(y_pred[st_i[k], st_j[k]])
-            hr_val = float(y_hr[st_i[k], st_j[k]])
+            pred_val = _extract_val(y_pred, k) - station_bias_model.get(sid, 0.0)
+            hr_val = _extract_val(y_hr, k) - station_bias_hr.get(sid, 0.0)
             if np.isfinite(obs_val):
                 for seg in segments:
                     segment_obs[seg].append(obs_val)
@@ -407,6 +529,7 @@ def main():
         sid = str(sid)
         m_pred = _metrics(station_seg_pred[sid].get("all", []), station_seg_obs[sid].get("all", []))
         m_hr = _metrics(station_seg_hr[sid].get("all", []), station_seg_obs[sid].get("all", []))
+        m_pred_hr = _metrics(station_seg_pred[sid].get("all", []), station_seg_hr[sid].get("all", []))
         rows.append({
             "station_id": sid,
             "MAE_model": m_pred["MAE"],
@@ -417,6 +540,10 @@ def main():
             "RMSE_urbclim": m_hr["RMSE"],
             "Bias_urbclim": m_hr["Bias"],
             "Corr_urbclim": m_hr["Corr"],
+            "MAE_model_vs_urbclim": m_pred_hr["MAE"],
+            "RMSE_model_vs_urbclim": m_pred_hr["RMSE"],
+            "Bias_model_vs_urbclim": m_pred_hr["Bias"],
+            "Corr_model_vs_urbclim": m_pred_hr["Corr"],
             "N": m_pred["N"],
         })
 
@@ -431,6 +558,7 @@ def main():
         for segment in available_segments:
             m_pred = _metrics(station_seg_pred[sid].get(segment, []), station_seg_obs[sid].get(segment, []))
             m_hr = _metrics(station_seg_hr[sid].get(segment, []), station_seg_obs[sid].get(segment, []))
+            m_pred_hr = _metrics(station_seg_pred[sid].get(segment, []), station_seg_hr[sid].get(segment, []))
             if m_pred["N"] <= 0:
                 continue
             seg_rows.append({
@@ -444,6 +572,10 @@ def main():
                 "RMSE_urbclim": m_hr["RMSE"],
                 "Bias_urbclim": m_hr["Bias"],
                 "Corr_urbclim": m_hr["Corr"],
+                "MAE_model_vs_urbclim": m_pred_hr["MAE"],
+                "RMSE_model_vs_urbclim": m_pred_hr["RMSE"],
+                "Bias_model_vs_urbclim": m_pred_hr["Bias"],
+                "Corr_model_vs_urbclim": m_pred_hr["Corr"],
                 "N": m_pred["N"],
             })
     per_station_segment_path = os.path.join(args.out_dir, "stations_eval_per_station_by_segment.csv")
@@ -456,6 +588,7 @@ def main():
 
     sum_pred = _metrics(all_pred, all_obs)
     sum_hr = _metrics(all_hr, all_obs)
+    sum_pred_hr = _metrics(all_pred, all_hr)
 
     summary = pd.DataFrame([{
         "split": args.split,
@@ -467,6 +600,10 @@ def main():
         "RMSE_urbclim": sum_hr["RMSE"],
         "Bias_urbclim": sum_hr["Bias"],
         "Corr_urbclim": sum_hr["Corr"],
+        "MAE_model_vs_urbclim": sum_pred_hr["MAE"],
+        "RMSE_model_vs_urbclim": sum_pred_hr["RMSE"],
+        "Bias_model_vs_urbclim": sum_pred_hr["Bias"],
+        "Corr_model_vs_urbclim": sum_pred_hr["Corr"],
         "N": sum_pred["N"],
         "samples_used": used,
     }])
@@ -481,6 +618,7 @@ def main():
         seg_hr = np.array(segment_hr.get(segment, []), dtype=np.float32)
         m_pred = _metrics(seg_pred, seg_obs)
         m_hr = _metrics(seg_hr, seg_obs)
+        m_pred_hr = _metrics(seg_pred, seg_hr)
         summary_segments.append({
             "segment": segment,
             "split": args.split,
@@ -492,6 +630,10 @@ def main():
             "RMSE_urbclim": m_hr["RMSE"],
             "Bias_urbclim": m_hr["Bias"],
             "Corr_urbclim": m_hr["Corr"],
+            "MAE_model_vs_urbclim": m_pred_hr["MAE"],
+            "RMSE_model_vs_urbclim": m_pred_hr["RMSE"],
+            "Bias_model_vs_urbclim": m_pred_hr["Bias"],
+            "Corr_model_vs_urbclim": m_pred_hr["Corr"],
             "N": m_pred["N"],
             "samples_used": used,
         })

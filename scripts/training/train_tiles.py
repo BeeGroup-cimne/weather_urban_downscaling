@@ -4,6 +4,8 @@ Tile-based training (independent from the full-frame pipeline).
 Default sampler: static_weighted.
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import sys

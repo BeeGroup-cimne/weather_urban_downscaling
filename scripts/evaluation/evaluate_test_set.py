@@ -9,8 +9,15 @@ import os
 import sys
 import numpy as np
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(PROJECT_ROOT)
+# Optional legacy tf.keras switch for TensorFlow 2.16+/Keras 3 environments.
+if os.getenv("FORCE_TF_LEGACY_KERAS", "0") == "1":
+    os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+
+import tensorflow as tf
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from config.runtime import Config
 from src.data_loader import BigDataPipeline
@@ -41,6 +48,7 @@ def main():
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
     parser.add_argument("--max-batches", type=int, default=0, help="0 = all")
     parser.add_argument("--ssim-samples", type=int, default=0, help="0 = skip SSIM")
+    parser.add_argument("--log-every", type=int, default=25, help="Print progress every N batches (0=off).")
     parser.add_argument("--out-csv", default="", help="Optional CSV path to save metrics row.")
     parser.add_argument("--split-mode", default="inherit", choices=["inherit", "time", "fraction"])
     parser.add_argument("--split-fraction", type=float, default=None)
@@ -99,9 +107,18 @@ def main():
     if args.ssim_samples > 0:
         try:
             from skimage.metrics import structural_similarity as ssim
-            ssim_fn = ssim
+            ssim_fn = lambda yt, yp: float(
+                ssim(yt, yp, data_range=float(yt.max() - yt.min() + 1e-6))
+            )
+            print("ℹ️ SSIM backend: skimage")
         except Exception as e:
-            print(f"⚠️ SSIM no disponible: {e}")
+            print(f"⚠️ SSIM skimage no disponible ({e}). Usando fallback tf.image.ssim.")
+            def _ssim_tf(yt, yp):
+                yt_t = tf.convert_to_tensor(yt[np.newaxis, :, :, np.newaxis], dtype=tf.float32)
+                yp_t = tf.convert_to_tensor(yp[np.newaxis, :, :, np.newaxis], dtype=tf.float32)
+                max_val = float(np.max(yt) - np.min(yt) + 1e-6)
+                return float(tf.image.ssim(yt_t, yp_t, max_val=max_val).numpy()[0])
+            ssim_fn = _ssim_tf
 
     abs_sum = 0.0
     sq_sum = 0.0
@@ -134,9 +151,11 @@ def main():
                         break
                     yt = y_true[bi, ti, :, :, 0]
                     yp = y_pred[bi, ti, :, :, 0]
-                    data_range = yt.max() - yt.min() + 1e-6
-                    ssim_sum += ssim_fn(yt, yp, data_range=data_range)
+                    ssim_sum += ssim_fn(yt, yp)
                     ssim_count += 1
+
+        if args.log_every and args.log_every > 0 and (i + 1) % args.log_every == 0:
+            print(f"   progress: batches={i+1}, elements={count}, ssim_samples={ssim_count}")
 
     if count == 0:
         print("❌ No data to evaluate.")

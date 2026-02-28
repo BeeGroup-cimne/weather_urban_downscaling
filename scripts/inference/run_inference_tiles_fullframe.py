@@ -13,12 +13,14 @@ import xarray as xr
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(PROJECT_ROOT)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Be robust to where this script is invoked from (cwd may differ).
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from config.runtime import Config
 from src.models_legacy import ModelZoo
-from scripts.fig_utils import (
+from scripts.figures.fig_utils import (
     extract_lat_lon_2d_from_da,
     parse_percentile_range,
     robust_limits,
@@ -90,6 +92,12 @@ def main():
         choices=["mamba", "unet", "convlstm", "transformer", "baseline_nearest", "baseline_bilinear"],
     )
     parser.add_argument("--model-path", required=False, default=None)
+    parser.add_argument(
+        "--seq-len",
+        type=int,
+        default=None,
+        help="Override Config.SEQ_LEN for this inference run (useful for comparing seq=6 vs seq=12).",
+    )
     parser.add_argument("--patch-size", type=int, default=96)
     parser.add_argument("--stride", type=int, default=48, help="stride for sliding window (in HR pixels)")
     parser.add_argument("--batch-size", type=int, default=8, help="inference batch size")
@@ -131,6 +139,10 @@ def main():
     parser.add_argument("--show-error", action="store_true", help="Add absolute error panel")
     parser.add_argument("--out", default=os.path.join("experiments", "figures", "tiles_fullframe_pred.png"))
     args = parser.parse_args()
+
+    if args.seq_len is not None and int(args.seq_len) > 0:
+        # Keep default behavior unless explicitly requested.
+        Config.SEQ_LEN = int(args.seq_len)
 
     is_baseline = str(args.model_type).startswith("baseline_")
     if not is_baseline:

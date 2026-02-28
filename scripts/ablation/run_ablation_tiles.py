@@ -3,6 +3,8 @@
 Tile-based ablation study (independent from full-frame pipeline).
 """
 
+from __future__ import annotations
+
 import argparse
 import gc
 import os
@@ -37,7 +39,7 @@ def run_post_inference(model_type: str, model_path: str, patch_size: int, experi
 
     cmd = [
         sys.executable,
-        os.path.join(PROJECT_ROOT, "scripts", "run_inference_tiles_fullframe.py"),
+        os.path.join(PROJECT_ROOT, "scripts", "inference", "run_inference_tiles_fullframe.py"),
         "--model-type", model_type,
         "--model-path", model_path,
         "--patch-size", str(patch_size),

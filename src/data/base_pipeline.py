@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Base data pipeline — shared temporal-sampling and utility methods.
 
@@ -195,8 +197,8 @@ class TemporalSamplerMixin:
             time_dim = next((d for d in da.dims if d in ["time", "valid_time"]), da.dims[0])
             reduce_dims = [d for d in da.dims if d != time_dim]
             series = da.mean(dim=reduce_dims).values
-            station_times = pd.to_datetime(da[time_dim].values).floor("H")
-            ds_times = pd.to_datetime(ds["time"].values).floor("H")
+            station_times = pd.to_datetime(da[time_dim].values).floor("h")
+            ds_times = pd.to_datetime(ds["time"].values).floor("h")
             time_map = {t: i for i, t in enumerate(station_times)}
             aligned = np.zeros(ds_times.shape[0], dtype=np.float32)
             for i, t in enumerate(ds_times):

@@ -9,9 +9,13 @@ export MPLBACKEND="${MPLBACKEND:-Agg}"
 export SAVE_MODEL_DIAGRAM="${SAVE_MODEL_DIAGRAM:-0}"
 export SAVE_VISUALIZATIONS="${SAVE_VISUALIZATIONS:-0}"
 export SAVE_COMPARATIVE_HISTORY="${SAVE_COMPARATIVE_HISTORY:-0}"
+# For this legacy ablation stack, default to tf_keras compatibility on TF 2.16+/Keras 3.
+export FORCE_TF_LEGACY_KERAS="${FORCE_TF_LEGACY_KERAS:-1}"
 
 if [[ -z "${PYTHON_BIN:-}" ]]; then
-  if [[ -x "/opt/miniconda3/envs/ml_m4/bin/python" ]]; then
+  if [[ -x "./.venv/bin/python" ]]; then
+    PYTHON_BIN="./.venv/bin/python"
+  elif [[ -x "/opt/miniconda3/envs/ml_m4/bin/python" ]]; then
     PYTHON_BIN="/opt/miniconda3/envs/ml_m4/bin/python"
   elif command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="$(command -v python3)"
@@ -24,7 +28,7 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
 fi
 
 # Experiment 3 defaults: full-frame replica on top models
-MODELS="${MODELS:-transformer mamba}"
+MODELS="${MODELS:-unet lstm transformer mamba mamba_seq12}"
 SEEDS="${SEEDS:-42 43 44}"
 MIN_SEQ_LEN="${MIN_SEQ_LEN:-6}"
 EPOCHS="${EPOCHS:-35}"
@@ -42,6 +46,7 @@ TEST_END="${TEST_END:-2017-10-01}"
 EVAL_SPLIT="${EVAL_SPLIT:-test}"
 EVAL_MAX_BATCHES="${EVAL_MAX_BATCHES:-0}"
 EVAL_SSIM_SAMPLES="${EVAL_SSIM_SAMPLES:-128}"
+EVAL_LOG_EVERY="${EVAL_LOG_EVERY:-25}"
 
 OUTDIR="${OUTDIR:-experiments/fullframe/experiment3_$(date +%Y%m%d_%H%M%S)}"
 EXP1_AGG_CSV="${EXP1_AGG_CSV:-}"
@@ -65,7 +70,36 @@ to_upper() {
 model_type_for_eval() {
   case "$1" in
     lstm) echo "convlstm" ;;
+    mamba_seq12) echo "mamba" ;;
     *) echo "$1" ;;
+  esac
+}
+
+checkpoint_for_model_seed() {
+  local model="$1"
+  local seed="$2"
+  local model_u
+  model_u="$(to_upper "${model}")"
+  local suffix="S${seed}"
+  local ckpt_prefix="${CKPT_PREFIX//@MODEL@/${model_u}}"
+  if [[ "${model}" == "mamba_seq12" ]]; then
+    echo "experiments/models/Ablation_MAMBA_Legacy_${suffix}_SEQ12_best.h5"
+    return
+  fi
+  echo "experiments/models/${ckpt_prefix}${suffix}_best.h5"
+}
+
+train_model_key() {
+  case "$1" in
+    mamba_seq12) echo "mamba" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+eval_seq_len_for_model() {
+  case "$1" in
+    mamba_seq12) echo "12" ;;
+    *) echo "" ;;
   esac
 }
 
@@ -90,6 +124,7 @@ echo "   Output dir: ${OUTDIR}"
   echo "EVAL_SPLIT=${EVAL_SPLIT}"
   echo "EVAL_MAX_BATCHES=${EVAL_MAX_BATCHES}"
   echo "EVAL_SSIM_SAMPLES=${EVAL_SSIM_SAMPLES}"
+  echo "EVAL_LOG_EVERY=${EVAL_LOG_EVERY}"
   echo "EXP1_AGG_CSV=${EXP1_AGG_CSV}"
   echo "SKIP_TRAINING=${SKIP_TRAINING}"
   echo "CKPT_PREFIX=${CKPT_PREFIX}"
@@ -97,11 +132,11 @@ echo "   Output dir: ${OUTDIR}"
 
 for seed in "${SEEDS_ARR[@]}"; do
   for model in "${MODELS_ARR[@]}"; do
-    model_u="$(to_upper "${model}")"
     suffix="S${seed}"
-    ckpt_prefix="${CKPT_PREFIX//@MODEL@/${model_u}}"
-    ckpt="experiments/models/${ckpt_prefix}${suffix}_best.h5"
+    ckpt="$(checkpoint_for_model_seed "${model}" "${seed}")"
     eval_type="$(model_type_for_eval "${model}")"
+    eval_seq_len="$(eval_seq_len_for_model "${model}")"
+    model_train_key="$(train_model_key "${model}")"
     eval_csv="${OUTDIR}/evals/${model}_${suffix}.csv"
 
     if [[ "${SKIP_TRAINING}" == "1" ]]; then
@@ -110,8 +145,11 @@ for seed in "${SEEDS_ARR[@]}"; do
     else
       echo "=== TRAIN full-frame: model=${model} seed=${seed} ==="
       train_status="ok"
-      if ! "${PYTHON_BIN}" scripts/ablation/run_ablation.py \
-        --models "${model}" \
+      if [[ "${model}" == "mamba_seq12" ]]; then
+        echo "⚠️ Training mamba_seq12 is not supported from this script. Use SKIP_TRAINING=1 with pre-trained checkpoint."
+        train_status="unsupported"
+      elif ! "${PYTHON_BIN}" scripts/ablation/run_ablation.py \
+        --models "${model_train_key}" \
         --min-seq-len "${MIN_SEQ_LEN}" \
         --seed "${seed}" \
         --experiment-suffix "${suffix}" \
@@ -125,25 +163,35 @@ for seed in "${SEEDS_ARR[@]}"; do
         --test-end "${TEST_END}"; then
         train_status="failed"
       fi
+      if [[ ! -f "${ckpt}" ]]; then
+        train_status="failed"
+      fi
     fi
 
     eval_status="skipped"
     if [[ -f "${ckpt}" ]]; then
       echo "=== EVAL full-frame: model=${model} seed=${seed} split=${EVAL_SPLIT} ==="
-      if "${PYTHON_BIN}" scripts/evaluation/evaluate_test_set.py \
-        --model-type "${eval_type}" \
-        --model-path "${ckpt}" \
-        --split "${EVAL_SPLIT}" \
-        --max-batches "${EVAL_MAX_BATCHES}" \
-        --ssim-samples "${EVAL_SSIM_SAMPLES}" \
-        --out-csv "${eval_csv}" \
-        --split-mode time \
-        --train-start "${TRAIN_START}" \
-        --train-end "${TRAIN_END}" \
-        --val-start "${VAL_START}" \
-        --val-end "${VAL_END}" \
-        --test-start "${TEST_START}" \
-        --test-end "${TEST_END}"; then
+      eval_cmd=(
+        "${PYTHON_BIN}" scripts/evaluation/evaluate_test_set.py
+        --model-type "${eval_type}"
+        --model-path "${ckpt}"
+        --split "${EVAL_SPLIT}"
+        --max-batches "${EVAL_MAX_BATCHES}"
+        --ssim-samples "${EVAL_SSIM_SAMPLES}"
+        --log-every "${EVAL_LOG_EVERY}"
+        --out-csv "${eval_csv}"
+        --split-mode time
+        --train-start "${TRAIN_START}"
+        --train-end "${TRAIN_END}"
+        --val-start "${VAL_START}"
+        --val-end "${VAL_END}"
+        --test-start "${TEST_START}"
+        --test-end "${TEST_END}"
+      )
+      if [[ -n "${eval_seq_len}" ]]; then
+        eval_cmd+=(--seq-len "${eval_seq_len}")
+      fi
+      if "${eval_cmd[@]}"; then
         eval_status="ok"
         tail -n +2 "${eval_csv}" | while IFS=',' read -r model_type model_path split mae rmse mse ssim ssim_samples; do
           echo "${model},${seed},${split},${mae},${rmse},${mse},${ssim},${ssim_samples},${model_type},${model_path}" >> "${RAW_CSV}"

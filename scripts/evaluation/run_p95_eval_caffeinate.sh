@@ -43,7 +43,15 @@ if [[ -n "${TIMES_FILE}" ]]; then
     echo "TIMES_FILE not found: ${TIMES_FILE}" >&2
     exit 1
   fi
-  mapfile -t TIMES < <(rg -v '^(\\s*$|\\s*#)' "${TIMES_FILE}" || true)
+  TIMES=()
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    # trim leading/trailing spaces (bash 3 compatible)
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "${line}" ]] && continue
+    [[ "${line:0:1}" == "#" ]] && continue
+    TIMES+=("${line}")
+  done < "${TIMES_FILE}"
   if [[ "${#TIMES[@]}" -eq 0 ]]; then
     echo "TIMES_FILE provided but no timestamps were parsed: ${TIMES_FILE}" >&2
     exit 1
@@ -86,7 +94,7 @@ eval_one() {
     local tag exp
     tag="$(echo "${t}" | tr ":-T" "_")"
     exp="Tiles_${model_key}_${tag}"
-    "${PYTHON_BIN}" scripts/run_inference_tiles_fullframe.py \
+    "${PYTHON_BIN}" scripts/inference/run_inference_tiles_fullframe.py \
       --model-type "${model_type}" \
       --model-path "${model_path}" \
       --patch-size "${PATCH_SIZE}" \

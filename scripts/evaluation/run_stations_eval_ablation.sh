@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 export USE_GPU_CONFIG="${USE_GPU_CONFIG:-1}"
 export MPLBACKEND="${MPLBACKEND:-Agg}"
+# Avoid slow/noisy Matplotlib font cache creation in non-writable $HOME locations.
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/matplotlib}"
+mkdir -p "${MPLCONFIGDIR}" >/dev/null 2>&1 || true
 export TF_USE_LEGACY_KERAS="${TF_USE_LEGACY_KERAS:-1}"
 
 if [[ -z "${PYTHON_BIN:-}" ]]; then
-  if [[ -x "/opt/miniconda3/envs/ml_m4/bin/python" ]]; then
+  if [[ -x "./.venv/bin/python" ]]; then
+    PYTHON_BIN="./.venv/bin/python"
+  elif [[ -x "/opt/miniconda3/envs/ml_m4/bin/python" ]]; then
     PYTHON_BIN="/opt/miniconda3/envs/ml_m4/bin/python"
   elif command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="$(command -v python3)"
@@ -24,19 +29,22 @@ STATIONS_GRIB="${STATIONS_GRIB:-}"
 STATIONS_OBS_CSV="${STATIONS_OBS_CSV:-}"
 STATIONS_CSV="${STATIONS_CSV:-}"
 HEATWAVE_TIMES_FILE="${HEATWAVE_TIMES_FILE:-}"
-MODELS="${MODELS:-unet lstm transformer mamba}"
+MODELS="${MODELS:-unet lstm transformer mamba mamba_seq12 baseline_bilinear baseline_nearest}"
+SEED="${SEED:-42}"
 SPLIT="${SPLIT:-test}"
-MAX_SAMPLES="${MAX_SAMPLES:-200}"
+MAX_SAMPLES="${MAX_SAMPLES:-1000}"
 STRIDE="${STRIDE:-1}"
 DAY_START_HOUR="${DAY_START_HOUR:-8}"
 DAY_END_HOUR="${DAY_END_HOUR:-19}"
 TIME_OFFSET_HOURS="${TIME_OFFSET_HOURS:-0.0}"
+BIAS_CORRECTION="${BIAS_CORRECTION:-}"
 OUTDIR="${OUTDIR:-experiments/stations_eval/ablation_$(date +%Y%m%d_%H%M%S)}"
 
 CKPT_UNET="${CKPT_UNET:-}"
 CKPT_LSTM="${CKPT_LSTM:-}"
 CKPT_TRANSFORMER="${CKPT_TRANSFORMER:-}"
 CKPT_MAMBA="${CKPT_MAMBA:-}"
+CKPT_MAMBA_SEQ12="${CKPT_MAMBA_SEQ12:-}"
 
 if [[ $# -gt 0 && -z "${STATIONS_GRIB}" && -z "${STATIONS_OBS_CSV}" ]]; then
   case "$1" in
@@ -47,10 +55,10 @@ if [[ $# -gt 0 && -z "${STATIONS_GRIB}" && -z "${STATIONS_OBS_CSV}" ]]; then
 fi
 
 if [[ -z "${STATIONS_GRIB}" && -z "${STATIONS_OBS_CSV}" ]]; then
-  echo "Usage (GRIB): STATIONS_GRIB=/path/stations.grib scripts/run_stations_eval_ablation.sh" >&2
-  echo "Usage (CSV):  STATIONS_OBS_CSV=/path/stations_obs.csv scripts/run_stations_eval_ablation.sh" >&2
-  echo "   or: scripts/run_stations_eval_ablation.sh /path/stations.grib" >&2
-  echo "   or: scripts/run_stations_eval_ablation.sh /path/stations_obs.csv" >&2
+  echo "Usage (GRIB): STATIONS_GRIB=/path/stations.grib scripts/evaluation/run_stations_eval_ablation.sh" >&2
+  echo "Usage (CSV):  STATIONS_OBS_CSV=/path/stations_obs.csv scripts/evaluation/run_stations_eval_ablation.sh" >&2
+  echo "   or: scripts/evaluation/run_stations_eval_ablation.sh /path/stations.grib" >&2
+  echo "   or: scripts/evaluation/run_stations_eval_ablation.sh /path/stations_obs.csv" >&2
   exit 1
 fi
 
@@ -105,32 +113,55 @@ run_one() {
   local model="$1"
   local model_type=""
   local ckpt=""
+  local seq_len="6"
 
   case "${model}" in
     unet)
       model_type="unet"
       ckpt="$(resolve_ckpt "${model}" "${CKPT_UNET}" \
+        "experiments/models/Ablation_UNET_Legacy_S${SEED}_best.h5" \
         "experiments/models/Ablation_UNET_Legacy_best.h5" \
         "experiments/models/Ablation_UNet_Legacy_best.h5" \
+        "experiments/models/Tiles_UNET_S${SEED}_best.h5" \
         "experiments/models/UNet_best.h5")"
       ;;
     lstm)
       model_type="convlstm"
       ckpt="$(resolve_ckpt "${model}" "${CKPT_LSTM}" \
+        "experiments/models/Ablation_LSTM_Legacy_S${SEED}_best.h5" \
         "experiments/models/Ablation_LSTM_Legacy_best.h5" \
+        "experiments/models/Tiles_LSTM_S${SEED}_best.h5" \
         "experiments/models/ConvLSTM_best.h5")"
       ;;
     transformer)
       model_type="transformer"
       ckpt="$(resolve_ckpt "${model}" "${CKPT_TRANSFORMER}" \
+        "experiments/models/Ablation_TRANSFORMER_Legacy_S${SEED}_best.h5" \
         "experiments/models/Ablation_TRANSFORMER_Legacy_best.h5" \
+        "experiments/models/Tiles_TRANSFORMER_S${SEED}_best.h5" \
         "experiments/models/Transformer_best.h5")"
       ;;
     mamba)
       model_type="mamba"
       ckpt="$(resolve_ckpt "${model}" "${CKPT_MAMBA}" \
+        "experiments/models/Ablation_MAMBA_Legacy_S${SEED}_best.h5" \
         "experiments/models/Ablation_MAMBA_Legacy_best.h5" \
+        "experiments/models/Tiles_MAMBA_S${SEED}_best.h5" \
         "experiments/models/Mamba_best.h5")"
+      ;;
+    mamba_seq12)
+      model_type="mamba"
+      seq_len="12"
+      ckpt="$(resolve_ckpt "${model}" "${CKPT_MAMBA_SEQ12}" \
+        "experiments/models/Ablation_MAMBA_Legacy_S${SEED}_SEQ12_best.h5")"
+      ;;
+    baseline_bilinear)
+      model_type="baseline_bilinear"
+      ckpt="__baseline__"
+      ;;
+    baseline_nearest)
+      model_type="baseline_nearest"
+      ckpt="__baseline__"
       ;;
     *)
       echo "Unknown model key: ${model}" >&2
@@ -138,7 +169,7 @@ run_one() {
       ;;
   esac
 
-  if [[ ! -f "${ckpt}" ]]; then
+  if [[ "${ckpt}" != "__baseline__" && ! -f "${ckpt}" ]]; then
     echo "⚠️ Missing checkpoint for ${model}: ${ckpt}"
     echo "${model},${model_type},${ckpt},missing" >> "${CHECKPOINTS_CSV}"
     return 0
@@ -149,16 +180,22 @@ run_one() {
 
   echo "=== Stations eval: model=${model} type=${model_type} ==="
   echo "   checkpoint=${ckpt}"
+  echo "   seq_len=${seq_len}"
 
   local cmd=(
-    "${PYTHON_BIN}" scripts/evaluate_stations_grib.py
-    --model-path "${ckpt}"
+    "${PYTHON_BIN}" scripts/evaluation/evaluate_stations_grib.py
     --model-type "${model_type}"
+    --seq-len "${seq_len}"
     --split "${SPLIT}"
     --max-samples "${MAX_SAMPLES}"
     --stride "${STRIDE}"
     --out-dir "${model_out}"
   )
+  if [[ "${ckpt}" == "__baseline__" ]]; then
+    cmd+=(--baseline)
+  else
+    cmd+=(--model-path "${ckpt}")
+  fi
   if [[ -n "${STATIONS_GRIB}" ]]; then
     cmd+=(--stations-grib "${STATIONS_GRIB}")
   fi
@@ -176,6 +213,9 @@ run_one() {
     --day-end-hour "${DAY_END_HOUR}"
     --time-offset-hours "${TIME_OFFSET_HOURS}"
   )
+  if [[ -n "${BIAS_CORRECTION}" ]]; then
+    cmd+=(--bias-correction)
+  fi
 
   if "${cmd[@]}"; then
     echo "${model},${model_type},${ckpt},ok" >> "${CHECKPOINTS_CSV}"
