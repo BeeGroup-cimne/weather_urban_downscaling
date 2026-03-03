@@ -89,6 +89,10 @@ def main():
         default=6,
         help="Minimum temporal sequence length for all models in ablation.",
     )
+    parser.add_argument("--seq-len", type=int, default=None,
+        help="Force SEQ_LEN to this exact value (overrides GPUServerConfig).")
+    parser.add_argument("--batch-size", type=int, default=None,
+        help="Force BATCH_SIZE (overrides GPUServerConfig).")
     parser.add_argument("--seed", type=int, default=None, help="Override random seed for reproducibility.")
     parser.add_argument("--experiment-suffix", type=str, default="", help="Suffix appended to experiment names (e.g. S42).")
     parser.add_argument("--epochs", type=int, default=None, help="Override Config.EPOCHS.")
@@ -149,9 +153,17 @@ def main():
     output_base_dir = Config.EXPERIMENTS_DIR
     os.makedirs(output_base_dir, exist_ok=True)
 
-    if getattr(Config, "SEQ_LEN", 0) < args.min_seq_len:
+    # --seq-len forces exact value; --min-seq-len only raises
+    if args.seq_len is not None:
+        print(f"   ⏱️ Forzando SEQ_LEN: {Config.SEQ_LEN} -> {args.seq_len}")
+        Config.SEQ_LEN = args.seq_len
+    elif getattr(Config, "SEQ_LEN", 0) < args.min_seq_len:
         print(f"   ⏱️ Ajustando SEQ_LEN: {Config.SEQ_LEN} -> {args.min_seq_len}")
         Config.SEQ_LEN = args.min_seq_len
+
+    if args.batch_size is not None:
+        print(f"   📦 Forzando BATCH_SIZE: {Config.BATCH_SIZE} -> {args.batch_size}")
+        Config.BATCH_SIZE = args.batch_size
     
     all_histories = {}
     results_summary = []

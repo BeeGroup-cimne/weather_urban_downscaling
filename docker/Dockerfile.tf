@@ -24,16 +24,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir 'numpy>=1.24,<2.0' 'tensorflow>=2.15.0,<2.16' && \
     pip install --no-cache-dir -r requirements_tf.txt
 
-# Copy project code (only what's needed for run_ablation.py)
+# Copy project code
 COPY config/ ./config/
-COPY src/__init__.py ./src/
-COPY src/data_loader.py ./src/
-COPY src/data_loader_tiles.py ./src/
-COPY src/models_legacy.py ./src/
-COPY src/losses.py ./src/
-COPY src/data/ ./src/data/
-COPY src/utils/__init__.py ./src/utils/
-COPY src/utils/training.py ./src/utils/
+COPY src/ ./src/
 
 # Scripts needed for server training, evaluation, and figures
 COPY scripts/ ./scripts/
