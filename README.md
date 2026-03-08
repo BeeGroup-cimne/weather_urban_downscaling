@@ -9,16 +9,16 @@ Urban thermal downscaling from low-resolution data (ERA5-Land / UrbClim) to HR m
 This repository now includes **3 publishable experiments** runnable through single entry scripts:
 
 1. **Experiment 1 (tiles + heatwave, multi-seed, multi-model, with baselines)**  
-   Main script: `scripts/run_ablation_tiles_heatwave_caffeinate.sh`
+   Main script: `scripts/ablation/run_ablation_tiles_heatwave_caffeinate.sh`
 2. **Experiment 2 (external validation against real weather stations)**  
-   Main script: `scripts/run_stations_eval_ablation.sh`
+   Main script: `scripts/evaluation/run_stations_eval_ablation.sh`
 3. **Experiment 3 (full-frame top-model replication + ranking stability vs Exp. 1)**  
-   Main script: `scripts/run_experiment3_fullframe_replica.sh`
+   Main script: `scripts/ablation/run_experiment3_fullframe_replica.sh`
 
 Server-ready wrappers and bundling tools are also included:
-- `scripts/run_ablation_tiles_heatwave_server.sh`
-- `scripts/make_server_bundle.sh`
-- `scripts/make_server_bundle.py`
+- `scripts/ablation/run_ablation_tiles_heatwave_server.sh`
+- `scripts/tools/make_server_bundle.sh`
+- `scripts/tools/make_server_bundle.py`
 
 ---
 
@@ -41,13 +41,13 @@ The two baseline models are minimum controls used to quantify the added value of
 
 | ID | Script | Goal | Models |
 |---|---|---|---|
-| E1 | `scripts/run_ablation_tiles_heatwave_caffeinate.sh` | Main publishable experiment (tiles, heat events, seeds, bootstrap CIs) | unet, lstm, transformer, mamba + baselines |
-| E2 | `scripts/run_stations_eval_ablation.sh` | External validation with real stations (day/night, heatwave/non-heatwave) | unet, lstm, transformer, mamba |
-| E3 | `scripts/run_experiment3_fullframe_replica.sh` | Full-frame replication of top models and ranking stability vs E1 | default: transformer, mamba |
-| A1 | `scripts/run_ablation.py` | Classic full-frame ablation (no tiles) | unet, lstm, transformer, mamba |
-| A2 | `scripts/run_ablation_tiles.py` | Configurable tile-based ablation (fast/iterative) | unet, lstm, transformer, mamba |
-| I1 | `scripts/run_inference_tiles_fullframe.py` | Full-frame reconstruction from tile-trained models + comparison maps | all + baselines |
-| V1 | `scripts/evaluate_test_set.py` | MAE/RMSE/SSIM evaluation on train/val/test splits | unet, convlstm, transformer, mamba |
+| E1 | `scripts/ablation/run_ablation_tiles_heatwave_caffeinate.sh` | Main publishable experiment (tiles, heat events, seeds, bootstrap CIs) | unet, lstm, transformer, mamba + baselines |
+| E2 | `scripts/evaluation/run_stations_eval_ablation.sh` | External validation with real stations (day/night, heatwave/non-heatwave) | unet, lstm, transformer, mamba |
+| E3 | `scripts/ablation/run_experiment3_fullframe_replica.sh` | Full-frame replication of top models and ranking stability vs E1 | default: transformer, mamba |
+| A1 | `scripts/ablation/run_ablation.py` | Classic full-frame ablation (no tiles) | unet, lstm, transformer, mamba |
+| A2 | `scripts/ablation/run_ablation_tiles.py` | Configurable tile-based ablation (fast/iterative) | unet, lstm, transformer, mamba |
+| I1 | `scripts/inference/run_inference_tiles_fullframe.py` | Full-frame reconstruction from tile-trained models + comparison maps | all + baselines |
+| V1 | `scripts/evaluation/evaluate_test_set.py` | MAE/RMSE/SSIM evaluation on train/val/test splits | unet, convlstm, transformer, mamba |
 | S1 | `scripts/overfit_sanity.py` / `scripts/overfit_fixed_tile.py` | Training sanity checks | multiple |
 | H1 | `scripts/derive_aemet_heatwaves.py` | Build heatwave event timestamps from stations | n/a |
 
@@ -106,13 +106,13 @@ Auto-generated derived caches:
 ### 1) Experiment 1: tiles + heatwave publish run
 
 ```bash
-scripts/run_ablation_tiles_heatwave_caffeinate.sh
+scripts/ablation/run_ablation_tiles_heatwave_caffeinate.sh
 ```
 
 Linux server (without `caffeinate`):
 
 ```bash
-scripts/run_ablation_tiles_heatwave_server.sh
+scripts/ablation/run_ablation_tiles_heatwave_server.sh
 ```
 
 Main outputs (`OUTDIR`, default `experiments/heatwaves/publish_run_*`):
@@ -141,7 +141,7 @@ Then evaluate:
 ```bash
 STATIONS_GRIB=data/processed/stations_t2m.grib \
 HEATWAVE_TIMES_FILE=experiments/heatwaves/aemet/event_times_2017.txt \
-scripts/run_stations_eval_ablation.sh
+scripts/evaluation/run_stations_eval_ablation.sh
 ```
 
 Main outputs (`OUTDIR`, default `experiments/stations_eval/ablation_*`):
@@ -154,7 +154,32 @@ Main outputs (`OUTDIR`, default `experiments/stations_eval/ablation_*`):
 
 ```bash
 EXP1_AGG_CSV=experiments/heatwaves/<run>/metrics_aggregate_ci.csv \
-scripts/run_experiment3_fullframe_replica.sh
+scripts/ablation/run_experiment3_fullframe_replica.sh
+```
+
+### 4) Deterministic post-training orchestrator (recommended for final paper runs)
+
+Single entrypoint with explicit config:
+
+```bash
+./.venv/bin/python scripts/evaluation/run_narrative_eval.py \
+  --config config/eval_config.yaml \
+  --stages exp1,exp2,exp3,cs1,cs2
+```
+
+Dual protocol for Experiment 2 (standard vs station-aligned footprint):
+
+```bash
+./.venv/bin/python scripts/evaluation/run_exp2_dual_protocol.py \
+  --config config/eval_config.yaml \
+  --reuse-existing
+```
+
+Build the master report across all experiments/case studies:
+
+```bash
+./.venv/bin/python scripts/evaluation/build_master_report.py \
+  --config config/eval_config.yaml
 ```
 
 Main outputs (`OUTDIR`, default `experiments/fullframe/experiment3_*`):
@@ -171,26 +196,26 @@ Main outputs (`OUTDIR`, default `experiments/fullframe/experiment3_*`):
 Only `transformer` in E1:
 
 ```bash
-MODELS="transformer" scripts/run_ablation_tiles_heatwave_caffeinate.sh
+MODELS="transformer" scripts/ablation/run_ablation_tiles_heatwave_caffeinate.sh
 ```
 
 Only `mamba` in E1:
 
 ```bash
-MODELS="mamba" scripts/run_ablation_tiles_heatwave_caffeinate.sh
+MODELS="mamba" scripts/ablation/run_ablation_tiles_heatwave_caffeinate.sh
 ```
 
 With the server wrapper:
 
 ```bash
-MODELS="mamba" scripts/run_ablation_tiles_heatwave_server.sh
+MODELS="mamba" scripts/ablation/run_ablation_tiles_heatwave_server.sh
 ```
 
 ---
 
 ## Standardized Visualization (Fair Comparisons)
 
-`scripts/run_inference_tiles_fullframe.py` already supports consistent model-to-model comparison:
+`scripts/inference/run_inference_tiles_fullframe.py` already supports consistent model-to-model comparison:
 
 - LR is upscaled to HR for display.
 - All 3 panels (LR / Pred / HR) are shown at the same visual size.
@@ -203,7 +228,7 @@ MODELS="mamba" scripts/run_ablation_tiles_heatwave_server.sh
 Recommended example for comparable figures:
 
 ```bash
-python scripts/run_inference_tiles_fullframe.py \
+python scripts/inference/run_inference_tiles_fullframe.py \
   --model-type transformer \
   --model-path experiments/models/Tiles_TRANSFORMER_S42_best.h5 \
   --time 2017-08-15T15:00:00 \
@@ -234,7 +259,7 @@ The consolidated flow enforces:
 ### Build a server bundle
 
 ```bash
-scripts/make_server_bundle.sh dist/weather_urban_downscaling_server_bundle.tar.gz
+scripts/tools/make_server_bundle.sh dist/weather_urban_downscaling_server_bundle.tar.gz
 ```
 
 This includes scripts/config and excludes heavy outputs (models/figures/datasets).
@@ -259,4 +284,3 @@ This includes scripts/config and excludes heavy outputs (models/figures/datasets
 ## License
 
 MIT. See `LICENSE`.
-

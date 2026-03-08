@@ -1,120 +1,106 @@
 #!/usr/bin/env python3
-"""
-Small utilities for paper figure scripts.
-Keeps outputs consistent and avoids duplicated boilerplate.
-"""
+"""Shared plotting helpers for evaluation/inference scripts."""
 
-import os
-from datetime import datetime
-from typing import Iterable, Optional, Tuple
+from __future__ import annotations
+
+from typing import Iterable, Tuple
 
 import numpy as np
 
 
-def ensure_dir(path: str) -> None:
-    os.makedirs(path, exist_ok=True)
-
-
-def timestamp() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-
-
-def default_fig_dir() -> str:
-    return os.path.join("experiments", "figures")
-
-
-def safe_import_matplotlib():
+def parse_percentile_range(raw: str, default: Tuple[float, float] = (2.0, 98.0)) -> Tuple[float, float]:
+    """Parse a `low,high` percentile range with validation and fallback."""
     try:
-        import matplotlib.pyplot as plt  # noqa: F401
-        return True
-    except Exception as exc:
-        print(f"❌ matplotlib not available: {exc}")
-        print("Install it with: pip install matplotlib")
-        return False
-
-
-def safe_import_cartopy():
-    try:
-        import cartopy.crs as ccrs
-        import cartopy.feature as cfeature
-        return ccrs, cfeature
-    except Exception as exc:
-        print(f"⚠️ cartopy not available: {exc}")
-        print("Install it with: pip install cartopy")
-        return None, None
-
-
-def parse_percentile_range(text: str, default: Tuple[float, float] = (2.0, 98.0)) -> Tuple[float, float]:
-    try:
-        parts = [float(p.strip()) for p in str(text).split(",")]
-        if len(parts) != 2:
-            raise ValueError("Need two values")
-        low, high = parts
-        if not (0.0 <= low < high <= 100.0):
-            raise ValueError("Invalid percentile range")
-        return low, high
+        low_s, high_s = str(raw).split(",", 1)
+        low = float(low_s.strip())
+        high = float(high_s.strip())
+        if 0.0 <= low < high <= 100.0:
+            return low, high
     except Exception:
-        print(f"⚠️ Invalid percentile range '{text}'. Using default {default[0]},{default[1]}.")
-        return default
+        pass
+    return default
 
 
 def robust_limits(
     arrays: Iterable[np.ndarray],
     pct_low: float = 2.0,
     pct_high: float = 98.0,
-    hard_min: Optional[float] = None,
-    hard_max: Optional[float] = None,
-) -> Tuple[Optional[float], Optional[float]]:
+    hard_min: float | None = None,
+    hard_max: float | None = None,
+) -> Tuple[float, float]:
+    """Compute robust display limits from finite values across arrays."""
     values = []
     for arr in arrays:
         if arr is None:
             continue
-        vec = np.asarray(arr).astype(np.float32).ravel()
-        vec = vec[np.isfinite(vec)]
-        if vec.size:
-            values.append(vec)
+        a = np.asarray(arr)
+        if a.size == 0:
+            continue
+        fin = a[np.isfinite(a)]
+        if fin.size:
+            values.append(fin.ravel())
 
-    if not values:
-        return hard_min, hard_max
+    if values:
+        stacked = np.concatenate(values, axis=0)
+        vmin = float(np.nanpercentile(stacked, pct_low))
+        vmax = float(np.nanpercentile(stacked, pct_high))
+    else:
+        vmin, vmax = 0.0, 1.0
 
-    merged = np.concatenate(values)
-
-    vmin = hard_min
-    vmax = hard_max
-    if vmin is None:
-        vmin = float(np.nanpercentile(merged, pct_low))
-    if vmax is None:
-        vmax = float(np.nanpercentile(merged, pct_high))
-
-    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
-        vmin = float(np.nanmin(merged))
-        vmax = float(np.nanmax(merged))
-
-    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
-        return None, None
+    if hard_min is not None:
+        vmin = float(hard_min)
+    if hard_max is not None:
+        vmax = float(hard_max)
+    if not np.isfinite(vmin):
+        vmin = 0.0
+    if not np.isfinite(vmax):
+        vmax = vmin + 1.0
+    if vmax <= vmin:
+        vmax = vmin + 1e-6
     return vmin, vmax
 
 
-def extract_lat_lon_2d_from_da(da):
-    lat_candidates = ["latitude", "lat", "y"]
-    lon_candidates = ["longitude", "lon", "x"]
+def extract_lat_lon_2d_from_da(da) -> Tuple[np.ndarray | None, np.ndarray | None]:
+    """
+    Return 2D latitude/longitude arrays aligned to the HR grid when available.
 
-    lat_name = next((d for d in da.dims if d in lat_candidates), None)
-    lon_name = next((d for d in da.dims if d in lon_candidates), None)
-    if lat_name is None or lon_name is None:
+    Supports:
+    - 2D coords: latitude/longitude (or lat/lon, latitude_2d/longitude_2d)
+    - 1D coords: converted via meshgrid
+    """
+    coord_names_lat = ("latitude", "lat", "latitude_2d")
+    coord_names_lon = ("longitude", "lon", "longitude_2d")
+
+    lat = next((da.coords[n] for n in coord_names_lat if n in da.coords), None)
+    lon = next((da.coords[n] for n in coord_names_lon if n in da.coords), None)
+
+    if lat is None or lon is None:
         return None, None
 
-    if lat_name not in da.coords or lon_name not in da.coords:
-        return None, None
+    lat_v = np.asarray(lat.values)
+    lon_v = np.asarray(lon.values)
 
-    lat = np.asarray(da.coords[lat_name].values)
-    lon = np.asarray(da.coords[lon_name].values)
-
-    if lat.ndim == 1 and lon.ndim == 1:
-        lon2d, lat2d = np.meshgrid(lon, lat)
+    if lat_v.ndim == 2 and lon_v.ndim == 2:
+        return lat_v, lon_v
+    if lat_v.ndim == 1 and lon_v.ndim == 1:
+        lon2d, lat2d = np.meshgrid(lon_v, lat_v)
         return lat2d, lon2d
-
-    if lat.ndim == 2 and lon.ndim == 2 and lat.shape == lon.shape:
-        return lat, lon
-
+    if lat_v.ndim == 2 and lon_v.ndim == 1:
+        lon2d = np.broadcast_to(lon_v[None, :], lat_v.shape)
+        return lat_v, lon2d
+    if lon_v.ndim == 2 and lat_v.ndim == 1:
+        lat2d = np.broadcast_to(lat_v[:, None], lon_v.shape)
+        return lat2d, lon_v
     return None, None
+
+
+def safe_import_cartopy():
+    """Import cartopy lazily and safely for optional geo overlays."""
+    try:
+        import cartopy.crs as ccrs  # type: ignore
+        import cartopy.feature as cfeature  # type: ignore
+
+        return ccrs, cfeature
+    except Exception:
+        return None, None
+

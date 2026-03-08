@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 ENABLE_CAFFEINATE="${ENABLE_CAFFEINATE:-auto}"
 if [[ "${UNDER_CAFFEINATE:-0}" != "1" ]]; then
@@ -138,7 +138,7 @@ train_one() {
   local seed="$2"
   local suffix="S${seed}"
   echo "=== TRAIN model=${model} seed=${seed} ==="
-  "${PYTHON_BIN}" scripts/run_ablation_tiles.py \
+  "${PYTHON_BIN}" scripts/ablation/run_ablation_tiles.py \
     --models "${model}" \
     --seed "${seed}" \
     --experiment-suffix "${suffix}" \
@@ -206,7 +206,7 @@ infer_one_trained() {
   local tag
   tag="$(echo "${t}" | tr ':-T' '_')"
   local exp="PUB_${model_u}_${suffix}_${tag}"
-  "${PYTHON_BIN}" scripts/run_inference_tiles_fullframe.py \
+  "${PYTHON_BIN}" scripts/inference/run_inference_tiles_fullframe.py \
     --model-type "${model_type}" \
     --model-path "${ckpt}" \
     --patch-size "${PATCH_SIZE}" \
@@ -228,7 +228,7 @@ infer_one_baseline() {
   local baseline_u
   baseline_u="$(to_upper "${baseline}")"
   local exp="PUB_${baseline_u}_${tag}"
-  "${PYTHON_BIN}" scripts/run_inference_tiles_fullframe.py \
+  "${PYTHON_BIN}" scripts/inference/run_inference_tiles_fullframe.py \
     --model-type "${baseline}" \
     --patch-size "${PATCH_SIZE}" \
     --stride "${STRIDE}" \
@@ -438,7 +438,7 @@ print(f"Training summary: {train_path}")
 print(f"Publish report: {report_path}")
 PY
 
-"${PYTHON_BIN}" scripts/consolidate_experiment1.py \
+"${PYTHON_BIN}" scripts/evaluation/consolidate_experiment1.py \
   --out-dir "${OUTDIR}" \
   --bootstrap-samples 2000 \
   --bootstrap-seed 42 \

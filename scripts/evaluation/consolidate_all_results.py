@@ -7,7 +7,7 @@ Build a unified consolidation report across:
 - Experiment 3 (full-frame)
 
 Behavior:
-1) Detect latest runs (or use explicit args).
+1) Use explicit run directories provided via CLI args.
 2) Try to reconstruct missing Experiment 1 artifacts from per-figure metrics CSVs.
 3) Write consolidated outputs inside Experiment 2 directory.
 """
@@ -21,14 +21,6 @@ import os
 import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional
-
-
-def _latest_dir(pattern: str) -> Optional[str]:
-    paths = [p for p in glob.glob(pattern) if os.path.isdir(p)]
-    if not paths:
-        return None
-    paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return paths[0]
 
 
 def _safe_float(value: str, default: float = float("nan")) -> float:
@@ -188,12 +180,8 @@ def _read_cs1_rank(cs1_dir: Optional[str]) -> List[Dict]:
     return out
 
 
-def _read_exp3_status(project_root: str) -> List[Dict]:
-    dirs = sorted(
-        glob.glob(os.path.join(project_root, "experiments", "fullframe", "experiment3_*")),
-        key=lambda p: os.path.getmtime(p),
-        reverse=True,
-    )
+def _read_exp3_status(exp3_dir: str) -> List[Dict]:
+    dirs = [exp3_dir] if exp3_dir and os.path.isdir(exp3_dir) else []
     out: List[Dict] = []
     for d in dirs:
         raw = os.path.join(d, "fullframe_eval_raw.csv")
@@ -213,15 +201,26 @@ def _read_exp3_status(project_root: str) -> List[Dict]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-root", default=".")
-    parser.add_argument("--exp2-dir", default="", help="Override experiment2 directory.")
-    parser.add_argument("--exp1-dir", default="", help="Override experiment1 publish_run directory.")
-    parser.add_argument("--cs1-dir", default="", help="Override case study 1 directory.")
+    parser.add_argument("--exp2-dir", required=True, help="Explicit experiment2 directory.")
+    parser.add_argument("--exp1-dir", required=True, help="Explicit experiment1 publish_run directory.")
+    parser.add_argument("--cs1-dir", required=True, help="Explicit case study 1 directory.")
+    parser.add_argument("--exp3-dir", required=True, help="Explicit experiment3 directory.")
     args = parser.parse_args()
 
     project_root = os.path.abspath(args.project_root)
-    exp2_dir = args.exp2_dir or _latest_dir(os.path.join(project_root, "experiments", "stations_eval", "experiment2_*"))
-    exp1_dir = args.exp1_dir or _latest_dir(os.path.join(project_root, "experiments", "heatwaves", "publish_run_*"))
-    cs1_dir = args.cs1_dir or _latest_dir(os.path.join(project_root, "experiments", "heatwaves", "casestudy1_*"))
+    exp2_dir = args.exp2_dir
+    exp1_dir = args.exp1_dir
+    cs1_dir = args.cs1_dir
+    exp3_dir = args.exp3_dir
+
+    if not os.path.isabs(exp2_dir):
+        exp2_dir = os.path.join(project_root, exp2_dir)
+    if not os.path.isabs(exp1_dir):
+        exp1_dir = os.path.join(project_root, exp1_dir)
+    if not os.path.isabs(cs1_dir):
+        cs1_dir = os.path.join(project_root, cs1_dir)
+    if not os.path.isabs(exp3_dir):
+        exp3_dir = os.path.join(project_root, exp3_dir)
 
     if not exp2_dir:
         raise SystemExit("No experiment2 directory found.")
@@ -229,7 +228,7 @@ def main() -> int:
     exp1_status = _ensure_experiment1_artifacts(project_root, exp1_dir)
     exp2_rank = _read_exp2_rank(exp2_dir)
     cs1_rank = _read_cs1_rank(cs1_dir)
-    exp3_status = _read_exp3_status(project_root)
+    exp3_status = _read_exp3_status(exp3_dir)
 
     csv_out = os.path.join(exp2_dir, "consolidated_all_results.csv")
     csv_rows: List[Dict] = []
@@ -278,7 +277,7 @@ def main() -> int:
         f.write(f"- Case Study 1: `{cs1_dir or 'not found'}`\n")
         f.write(f"- Experiment 1 publish run: `{exp1_dir or 'not found'}`\n")
         if exp3_status:
-            f.write(f"- Experiment 3 latest run checked: `{exp3_status[0]['dir']}`\n")
+            f.write(f"- Experiment 3: `{exp3_status[0]['dir']}`\n")
         f.write("\n")
 
         f.write("## Experiment 2 (stations, segment=all, sorted by SSIM/Corr)\n\n")
@@ -352,7 +351,7 @@ def main() -> int:
                     f"| `{row['dir']}` | {row['rows_raw']} | {row['rows_agg']} | {state} |\n"
                 )
         else:
-            f.write("No Experiment 3 directories found.\n")
+            f.write("Experiment 3 directory not found.\n")
 
     print(md_out)
     print(csv_out)

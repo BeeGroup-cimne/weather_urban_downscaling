@@ -96,13 +96,13 @@ def main():
     extra_files = [
         "SERVER_README.md",
         "docker-compose.server-fullframe.yml",
-        "scripts/run_server_fullframe.sh",
-        "scripts/run_ablation_tiles_heatwave_server.sh",
-        "scripts/run_stations_eval_ablation.sh",
-        "scripts/consolidate_experiment1.py",
-        "scripts/run_experiment3_fullframe_replica.sh",
-        "scripts/consolidate_experiment3.py",
-        "scripts/make_server_bundle.py",
+        "scripts/training/run_server_fullframe.sh",
+        "scripts/ablation/run_ablation_tiles_heatwave_server.sh",
+        "scripts/evaluation/run_stations_eval_ablation.sh",
+        "scripts/evaluation/consolidate_experiment1.py",
+        "scripts/ablation/run_experiment3_fullframe_replica.sh",
+        "scripts/evaluation/consolidate_experiment3.py",
+        "scripts/tools/make_server_bundle.py",
         "config/gpu_server_config.py" # Just in case
     ]
     

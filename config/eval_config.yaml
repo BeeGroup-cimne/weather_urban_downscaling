@@ -1,0 +1,172 @@
+version: 1
+project_root: .
+python_bin: ./.venv/bin/python
+frozen_training: true
+deterministic: true
+fail_on_missing: true
+
+data:
+  cache_zarr: data/processed/weather_cache.zarr
+  static_cache_npy: data/processed/static_processed.npy
+  stats_npz: data/processed/stats_config.npz
+  stations_obs_csv: experiments/stations_eval/data/meteocat_amb36_air_temperature_hourly_2017.csv
+  stations_grib: ""
+  stations_meta_csv: ""
+  heatwave_times_file: experiments/heatwaves/aemet/event_times_2017.txt
+
+checkpoints:
+  exp1_spatial:
+    unet:
+      s42: experiments/models/Tiles_UNET_S42_best.h5
+      s43: experiments/models/Tiles_UNET_S43_best.h5
+    lstm:
+      s42: experiments/models/Tiles_LSTM_S42_best.h5
+    transformer:
+      s42: experiments/models/Tiles_TRANSFORMER_S42_best.h5
+    mamba:
+      s42: experiments/models/Tiles_MAMBA_S42_best.h5
+    baselines:
+      - baseline_nearest
+      - baseline_bilinear
+
+  exp2_groundtruth:
+    unet:
+      s42: experiments/models/Tiles_UNET_S42_best.h5
+    lstm:
+      s42: experiments/models/Tiles_LSTM_S42_best.h5
+    transformer:
+      s42: experiments/models/Tiles_TRANSFORMER_S42_best.h5
+    mamba:
+      s42: experiments/models/Tiles_MAMBA_S42_best.h5
+    baselines:
+      - baseline_nearest
+      - baseline_bilinear
+
+  cs2_robustness:
+    unet:
+      s42: experiments/models/Tiles_UNET_S42_best.h5
+    lstm:
+      s42: experiments/models/Tiles_LSTM_S42_best.h5
+    transformer:
+      s42: experiments/models/Tiles_TRANSFORMER_S42_best.h5
+    mamba:
+      s42: experiments/models/Tiles_MAMBA_S42_best.h5
+
+narrative:
+  exp1:
+    enabled: true
+    run_id: exp1_spatial_publish
+    output_dir: experiments/eval_outputs/exp1_spatial_publish
+    checkpoint_set: exp1_spatial
+    models: [unet, lstm, transformer, mamba, baseline_nearest, baseline_bilinear]
+    times:
+      - 2017-06-28T15:00:00
+      - 2017-07-13T16:00:00
+      - 2017-08-15T15:00:00
+      - 2017-06-28T01:00:00
+      - 2017-07-13T02:00:00
+      - 2017-08-15T03:00:00
+    patch_size: 96
+    stride: 48
+    infer_batch: 8
+    scale_from: hr_lr
+    bootstrap_samples: 2000
+    bootstrap_seed: 42
+    alpha: 0.05
+
+  exp2:
+    enabled: true
+    run_id: exp2_groundtruth_publish
+    output_dir: experiments/eval_outputs/exp2_groundtruth_publish
+    checkpoint_set: exp2_groundtruth
+    models: [unet, lstm, transformer, mamba, baseline_nearest, baseline_bilinear]
+    seed: 42
+    split: test
+    max_samples: 1000
+    stride: 1
+    extraction_method: bilinear
+    footprint_radius_px: 0
+    footprint_sigma_px: 1.0
+    day_start_hour: 8
+    day_end_hour: 19
+    time_offset_hours: 0.0
+    bias_correction_mode: station_hour
+    save_hourly_traces: true
+
+  exp2_dual_protocol:
+    enabled: true
+    output_dir: experiments/eval_outputs/exp2_dual_protocol_publish
+    segments: [all, day, night]
+    protocols:
+      - id: standard
+        run_id: exp2_groundtruth_publish
+        output_dir: experiments/eval_outputs/exp2_groundtruth_publish
+        extraction_method: bilinear
+        footprint_radius_px: 0
+        footprint_sigma_px: 1.0
+        bias_correction_mode: station_hour
+      - id: station_aligned
+        # Reuse historical station-aligned run (no retraining, post-hoc comparison).
+        run_id: exp2_station_aligned_existing
+        output_dir: experiments/stations_eval/fig05_real_prep_full2017_20260306
+        models: [lstm, mamba, baseline_bilinear, mamba_seq12]
+        extraction_method: bilinear
+        footprint_radius_px: 1
+        footprint_sigma_px: 1.0
+        bias_correction_mode: station_hour
+
+  exp3:
+    enabled: true
+    run_id: exp3_bottleneck_publish
+    output_dir: experiments/eval_outputs/exp3_bottleneck_publish
+    split: test
+    ssim_samples: 256
+    max_batches: 0
+    log_every: 25
+    bootstrap_samples: 2000
+    bootstrap_seed: 42
+    alpha: 0.05
+    comparisons:
+      - name: mamba_seq6
+        model: mamba_seq6
+        model_type: mamba
+        checkpoint: experiments/models/Ablation_MAMBA_Legacy_S42_best.h5
+        seq_len: 6
+      - name: mamba_seq12
+        model: mamba_seq12
+        model_type: mamba
+        checkpoint: experiments/models/Ablation_MAMBA_Legacy_S42_SEQ12_best.h5
+        seq_len: 12
+    compare_pairs:
+      - a: mamba_seq6
+        b: mamba_seq12
+
+  case_study_1:
+    enabled: true
+    run_id: cs1_heatwave_publish
+    output_dir: experiments/eval_outputs/cs1_heatwave_publish
+    checkpoint_set: exp2_groundtruth
+    models: [baseline_nearest, unet, lstm, transformer, mamba]
+    seed: 42
+    seq_len: 6
+    patch_size: 96
+    stride: 48
+    infer_batch: 8
+    scale_from: hr_lr
+    times_file: experiments/heatwaves/aemet/event_times_2017.txt
+
+  case_study_2:
+    enabled: true
+    run_id: cs2_robustness_publish
+    output_dir: experiments/eval_outputs/cs2_robustness_publish
+    checkpoint_set: cs2_robustness
+    models: [unet, lstm, transformer, mamba]
+    seed: 42
+    epsilons: [0.10, 0.25, 0.50, 1.00]
+    n_trials: 40
+    patch_size: 96
+    stride: 48
+    batch_size: 8
+    times:
+      - 2017-06-15T15:00:00
+      - 2017-08-03T15:00:00

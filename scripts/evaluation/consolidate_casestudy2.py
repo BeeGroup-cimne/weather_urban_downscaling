@@ -19,14 +19,6 @@ from typing import Dict, List, Optional
 import numpy as np
 
 
-def _latest_dir(pattern: str) -> Optional[str]:
-    paths = [p for p in glob.glob(pattern) if os.path.isdir(p)]
-    if not paths:
-        return None
-    paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return paths[0]
-
-
 def _safe_float(v: str, default: float = float("nan")) -> float:
     try:
         return float(v)
@@ -144,21 +136,22 @@ def _load_cs1_rank(cs1_agg_csv: Optional[str]) -> Dict[str, int]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-root", default=".")
-    parser.add_argument("--case2-dir", default="")
-    parser.add_argument("--exp3-dir", default="")
-    parser.add_argument("--cs1-agg-csv", default="")
+    parser.add_argument("--case2-dir", required=True, help="Explicit Case Study 2 directory.")
+    parser.add_argument("--exp3-dir", required=True, help="Explicit Experiment 3 directory.")
+    parser.add_argument("--cs1-agg-csv", default="", help="Explicit Case Study 1 aggregate CSV (optional).")
     args = parser.parse_args()
 
     root = os.path.abspath(args.project_root)
-    case2_dir = args.case2_dir or _latest_dir(os.path.join(root, "experiments", "fullframe", "casestudy2_*"))
-    exp3_dir = args.exp3_dir or _latest_dir(os.path.join(root, "experiments", "fullframe", "experiment3_*"))
-    cs1_agg = args.cs1_agg_csv or os.path.join(
-        _latest_dir(os.path.join(root, "experiments", "heatwaves", "casestudy1_*")) or "",
-        "metrics_aggregate.csv",
-    )
+    case2_dir = args.case2_dir
+    exp3_dir = args.exp3_dir
+    cs1_agg = args.cs1_agg_csv
 
-    if not case2_dir:
-        raise SystemExit("No casestudy2 directory found.")
+    if not os.path.isabs(case2_dir):
+        case2_dir = os.path.join(root, case2_dir)
+    if not os.path.isabs(exp3_dir):
+        exp3_dir = os.path.join(root, exp3_dir)
+    if cs1_agg and not os.path.isabs(cs1_agg):
+        cs1_agg = os.path.join(root, cs1_agg)
 
     fig_dir = os.path.join(case2_dir, "figures")
     if not os.path.isdir(fig_dir):

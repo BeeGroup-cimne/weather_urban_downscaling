@@ -9,11 +9,11 @@ Operational guide to run the 3 consolidated paper experiments on server infrastr
 Run reproducibly:
 
 1. **E1**: `tiles + heatwave` ablation, multi-model/multi-seed + baselines + bootstrap CI  
-   `scripts/run_ablation_tiles_heatwave_server.sh`
+   `scripts/ablation/run_ablation_tiles_heatwave_server.sh`
 2. **E2**: External validation against real stations (segmented)  
-   `scripts/run_stations_eval_ablation.sh`
+   `scripts/evaluation/run_stations_eval_ablation.sh`
 3. **E3**: `full-frame` top-model replication + ranking stability vs E1  
-   `scripts/run_experiment3_fullframe_replica.sh`
+   `scripts/ablation/run_experiment3_fullframe_replica.sh`
 
 ---
 
@@ -39,7 +39,7 @@ Common environment variables:
 ```bash
 USE_GPU_CONFIG=1 \
 OUTDIR=experiments/heatwaves/publish_run_$(date +%Y%m%d_%H%M%S) \
-scripts/run_ablation_tiles_heatwave_server.sh
+scripts/ablation/run_ablation_tiles_heatwave_server.sh
 ```
 
 Defaults:
@@ -75,7 +75,7 @@ USE_GPU_CONFIG=1 \
 STATIONS_GRIB=data/processed/stations_t2m.grib \
 HEATWAVE_TIMES_FILE=experiments/heatwaves/aemet/event_times_2017.txt \
 OUTDIR=experiments/stations_eval/ablation_$(date +%Y%m%d_%H%M%S) \
-scripts/run_stations_eval_ablation.sh
+scripts/evaluation/run_stations_eval_ablation.sh
 ```
 
 Key artifacts:
@@ -92,7 +92,7 @@ MODELS="transformer mamba" \
 SEEDS="42 43 44" \
 EXP1_AGG_CSV=experiments/heatwaves/<run_e1>/metrics_aggregate_ci.csv \
 OUTDIR=experiments/fullframe/experiment3_$(date +%Y%m%d_%H%M%S) \
-scripts/run_experiment3_fullframe_replica.sh
+scripts/ablation/run_experiment3_fullframe_replica.sh
 ```
 
 Key artifacts:
@@ -109,13 +109,13 @@ Key artifacts:
 Only `transformer`:
 
 ```bash
-MODELS="transformer" scripts/run_ablation_tiles_heatwave_server.sh
+MODELS="transformer" scripts/ablation/run_ablation_tiles_heatwave_server.sh
 ```
 
 Only `mamba`:
 
 ```bash
-MODELS="mamba" scripts/run_ablation_tiles_heatwave_server.sh
+MODELS="mamba" scripts/ablation/run_ablation_tiles_heatwave_server.sh
 ```
 
 > Important: if `MODELS` is not set, the wrapper runs all models (`unet lstm transformer mamba`).
@@ -132,7 +132,7 @@ For fair map comparison, use:
 Example:
 
 ```bash
-python scripts/run_inference_tiles_fullframe.py \
+python scripts/inference/run_inference_tiles_fullframe.py \
   --model-type transformer \
   --model-path experiments/models/Tiles_TRANSFORMER_S42_best.h5 \
   --time 2017-08-15T15:00:00 \
@@ -161,7 +161,7 @@ If a run is interrupted:
 ## 7) Bundle for another server
 
 ```bash
-scripts/make_server_bundle.sh dist/weather_urban_downscaling_server_bundle.tar.gz
+scripts/tools/make_server_bundle.sh dist/weather_urban_downscaling_server_bundle.tar.gz
 ```
 
 Includes code/scripts and excludes heavy outputs.
@@ -174,3 +174,29 @@ Includes code/scripts and excludes heavy outputs.
 - For faster iteration, do a short E1 run first (fewer seeds/models), then execute the full final run.
 - Keep local runs for quick sanity checks; final publishable runs should be executed on server.
 
+---
+
+## 9) Deterministic post-training flow (recommended)
+
+Single config-driven orchestrator:
+
+```bash
+./.venv/bin/python scripts/evaluation/run_narrative_eval.py \
+  --config config/eval_config.yaml \
+  --stages exp1,exp2,exp3,cs1,cs2
+```
+
+Dual protocol for E2 (standard vs station-aligned):
+
+```bash
+./.venv/bin/python scripts/evaluation/run_exp2_dual_protocol.py \
+  --config config/eval_config.yaml \
+  --reuse-existing
+```
+
+Master report update after all runs:
+
+```bash
+./.venv/bin/python scripts/evaluation/build_master_report.py \
+  --config config/eval_config.yaml
+```

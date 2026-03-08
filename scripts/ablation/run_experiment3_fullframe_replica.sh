@@ -269,12 +269,6 @@ with open(train_path, "w", newline="", encoding="utf-8") as f:
 print(f"Training summary: {train_path}")
 PY
 
-if [[ -z "${EXP1_AGG_CSV}" ]]; then
-  if [[ -f "experiments/heatwaves/latest/metrics_aggregate_ci.csv" ]]; then
-    EXP1_AGG_CSV="experiments/heatwaves/latest/metrics_aggregate_ci.csv"
-  fi
-fi
-
 consolidate_cmd=(
   "${PYTHON_BIN}" scripts/evaluation/consolidate_experiment3.py
   --out-dir "${OUTDIR}"
