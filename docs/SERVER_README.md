@@ -209,3 +209,19 @@ Reproducibility manifest (checksums of config/checkpoints/key outputs):
   --out experiments/eval_outputs/repro_manifest.json \
   --strict
 ```
+
+Publication gate (fail-fast if required paper artifacts are missing/malformed):
+
+```bash
+./.venv/bin/python scripts/evaluation/validate_publication_artifacts.py \
+  --config config/eval_config.yaml \
+  --out experiments/eval_outputs/publication_gate_report.json
+```
+
+Deterministic publication bundle:
+
+```bash
+./.venv/bin/python scripts/evaluation/build_publication_bundle.py \
+  --config config/eval_config.yaml \
+  --out dist/publication_eval_bundle.tar.gz
+```

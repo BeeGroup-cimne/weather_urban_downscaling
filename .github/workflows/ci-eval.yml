@@ -33,7 +33,9 @@ jobs:
             scripts/evaluation/run_narrative_eval.py \
             scripts/evaluation/run_exp2_dual_protocol.py \
             scripts/evaluation/build_master_report.py \
-            scripts/evaluation/build_repro_manifest.py
+            scripts/evaluation/build_repro_manifest.py \
+            scripts/evaluation/validate_publication_artifacts.py \
+            scripts/evaluation/build_publication_bundle.py
 
       - name: Deterministic Smoke (No Stage Execution)
         run: |
@@ -46,4 +48,3 @@ jobs:
           python scripts/evaluation/build_repro_manifest.py \
             --config config/eval_config.yaml \
             --out /tmp/repro_manifest.json
-

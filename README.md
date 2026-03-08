@@ -278,6 +278,22 @@ Strict mode (fail if required stage outputs are missing):
   --strict
 ```
 
+Publication gate (required artifacts + basic sanity checks):
+
+```bash
+./.venv/bin/python scripts/evaluation/validate_publication_artifacts.py \
+  --config config/eval_config.yaml \
+  --out experiments/eval_outputs/publication_gate_report.json
+```
+
+Build deterministic publication bundle:
+
+```bash
+./.venv/bin/python scripts/evaluation/build_publication_bundle.py \
+  --config config/eval_config.yaml \
+  --out dist/publication_eval_bundle.tar.gz
+```
+
 ---
 
 ## Server Support
