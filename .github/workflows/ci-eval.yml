@@ -1,0 +1,49 @@
+name: CI Eval Minimal
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  eval-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Minimal Deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: Python Compile Check
+        run: |
+          python -m py_compile \
+            scripts/evaluation/run_narrative_eval.py \
+            scripts/evaluation/run_exp2_dual_protocol.py \
+            scripts/evaluation/build_master_report.py \
+            scripts/evaluation/build_repro_manifest.py
+
+      - name: Deterministic Smoke (No Stage Execution)
+        run: |
+          python scripts/evaluation/run_narrative_eval.py \
+            --config config/eval_config.yaml \
+            --stages ""
+
+      - name: Repro Manifest Generation
+        run: |
+          python scripts/evaluation/build_repro_manifest.py \
+            --config config/eval_config.yaml \
+            --out /tmp/repro_manifest.json
+

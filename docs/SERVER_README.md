@@ -200,3 +200,12 @@ Master report update after all runs:
 ./.venv/bin/python scripts/evaluation/build_master_report.py \
   --config config/eval_config.yaml
 ```
+
+Reproducibility manifest (checksums of config/checkpoints/key outputs):
+
+```bash
+./.venv/bin/python scripts/evaluation/build_repro_manifest.py \
+  --config config/eval_config.yaml \
+  --out experiments/eval_outputs/repro_manifest.json \
+  --strict
+```

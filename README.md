@@ -252,6 +252,32 @@ The consolidated flow enforces:
 - comparison against non-trained baselines
 - external validation with real stations and segmentation (day/night, heatwave/non-heatwave)
 
+### CI & Repro Manifest
+
+Minimal CI workflow: `.github/workflows/ci-eval.yml`
+
+What it checks:
+- Python compile check of evaluation orchestration scripts
+- deterministic smoke test (`run_narrative_eval.py --stages ""`)
+- reproducibility manifest generation
+
+Generate manifest locally:
+
+```bash
+./.venv/bin/python scripts/evaluation/build_repro_manifest.py \
+  --config config/eval_config.yaml \
+  --out experiments/eval_outputs/repro_manifest.json
+```
+
+Strict mode (fail if required stage outputs are missing):
+
+```bash
+./.venv/bin/python scripts/evaluation/build_repro_manifest.py \
+  --config config/eval_config.yaml \
+  --out experiments/eval_outputs/repro_manifest.json \
+  --strict
+```
+
 ---
 
 ## Server Support
