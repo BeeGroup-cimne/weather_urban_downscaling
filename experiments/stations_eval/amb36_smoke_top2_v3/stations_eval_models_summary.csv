@@ -1,7 +1,0 @@
-model,model_type,status,checkpoint,segment,split,MAE_model,RMSE_model,Bias_model,Corr_model,MAE_urbclim,RMSE_urbclim,Bias_urbclim,Corr_urbclim,N,samples_used
-mamba,mamba,ok,experiments/models/Ablation_MAMBA_Legacy_best.h5,all,test,3.1391602,3.503408,3.1192217,0.4688385054770506,0.9949638,1.2365947,0.11132605,0.7109525108235528,50,5
-mamba,mamba,ok,experiments/models/Ablation_MAMBA_Legacy_best.h5,day,test,2.8937306,3.1193645,2.843885,0.5210229749863776,0.84372693,1.0924958,0.39975008,0.6828695018410341,20,5
-mamba,mamba,ok,experiments/models/Ablation_MAMBA_Legacy_best.h5,night,test,3.3027804,3.7375777,3.3027804,0.32589736023590105,1.0957885,1.323976,-0.080956675,0.6465993215949237,30,5
-unet,unet,ok,experiments/models/Ablation_UNET_Legacy_best.h5,all,test,10.202467,10.39023,10.202467,0.09195823556870059,0.9949638,1.2365947,0.11132605,0.7109525108235528,50,5
-unet,unet,ok,experiments/models/Ablation_UNET_Legacy_best.h5,day,test,9.423539,9.551383,9.423539,0.16885775551653165,0.84372693,1.0924958,0.39975008,0.6828695018410341,20,5
-unet,unet,ok,experiments/models/Ablation_UNET_Legacy_best.h5,night,test,10.721751,10.9137,10.721751,0.056557846849363505,1.0957885,1.323976,-0.080956675,0.6465993215949237,30,5

@@ -1,2 +1,0 @@
-split,MAE_model,RMSE_model,Bias_model,Corr_model,MAE_urbclim,RMSE_urbclim,Bias_urbclim,Corr_urbclim,N,samples_used
-test,10.202467,10.39023,10.202467,0.09195823556870059,0.9949638,1.2365947,0.11132605,0.7109525108235528,50,5

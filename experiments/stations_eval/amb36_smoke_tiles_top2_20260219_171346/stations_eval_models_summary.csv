@@ -1,7 +1,0 @@
-model,model_type,status,checkpoint,segment,split,MAE_model,RMSE_model,Bias_model,Corr_model,MAE_urbclim,RMSE_urbclim,Bias_urbclim,Corr_urbclim,N,samples_used
-mamba,mamba,ok,experiments/models/Tiles_MAMBA_best.h5,all,test,4.8489842,6.3147864,4.826401,0.021003205316135618,0.9949638,1.2365947,0.11132605,0.7109525108235528,50,5
-mamba,mamba,ok,experiments/models/Tiles_MAMBA_best.h5,day,test,4.461661,5.615917,4.4133115,0.2473479469362476,0.84372693,1.0924958,0.39975008,0.6828695018410341,20,5
-mamba,mamba,ok,experiments/models/Tiles_MAMBA_best.h5,night,test,5.1072,6.7405634,5.1017942,-0.1389273791528317,1.0957885,1.323976,-0.080956675,0.6465993215949237,30,5
-unet,unet,ok,experiments/models/Tiles_UNET_best.h5,all,test,9.3269415,9.942327,9.3269415,-0.0732479623838371,0.9949638,1.2365947,0.11132605,0.7109525108235528,50,5
-unet,unet,ok,experiments/models/Tiles_UNET_best.h5,day,test,8.789531,9.260207,8.789531,0.1501695276926381,0.84372693,1.0924958,0.39975008,0.6828695018410341,20,5
-unet,unet,ok,experiments/models/Tiles_UNET_best.h5,night,test,9.685214,10.372181,9.685214,-0.24362963797682938,1.0957885,1.323976,-0.080956675,0.6465993215949237,30,5
