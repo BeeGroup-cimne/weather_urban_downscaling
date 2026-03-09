@@ -155,6 +155,9 @@ narrative:
     scale_from: hr_lr
     times_file: experiments/heatwaves/aemet/event_times_2017.txt
 
+  # Case Study 2B (current): input robustness under Monte Carlo perturbations.
+  # NOTE: Legacy Case Study 2A (night cooling/persistence) is stored in
+  # experiments/fullframe/casestudy2_20260223_022102 and is documented separately.
   case_study_2:
     enabled: true
     run_id: cs2_robustness_publish

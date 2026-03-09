@@ -167,6 +167,20 @@ Single entrypoint with explicit config:
   --stages exp1,exp2,exp3,cs1,cs2
 ```
 
+Run only Case Study 2B (Monte Carlo robustness):
+
+```bash
+./.venv/bin/python scripts/evaluation/run_narrative_eval.py \
+  --config config/eval_config.yaml \
+  --stages cs2
+```
+
+CS2B outputs:
+- `experiments/eval_outputs/cs2_robustness_publish/robustness_summary.csv`
+- `experiments/eval_outputs/cs2_robustness_publish/cs2_rank_stability.csv`
+- `experiments/eval_outputs/cs2_robustness_publish/<model>/robustness_results.csv`
+- `experiments/eval_outputs/cs2_robustness_publish/<model>/report_robustness.md`
+
 Dual protocol for Experiment 2 (standard vs station-aligned footprint):
 
 ```bash
@@ -188,6 +202,21 @@ Main outputs (`OUTDIR`, default `experiments/fullframe/experiment3_*`):
 - `fullframe_eval_aggregate.csv`
 - `ranking_stability_vs_exp1.csv`
 - `report_experiment3.md`
+
+### Case Study 2 Naming (Important)
+
+To avoid narrative ambiguity in the manuscript, use this convention:
+
+- `CS2A` = **Night Cooling & Persistence** (legacy spatial analysis of low nocturnal heat dissipation / persistent hotspots).  
+  Reference run:
+  - `experiments/fullframe/casestudy2_20260223_022102/report_casestudy2.md`
+  - `experiments/fullframe/casestudy2_20260223_022102/cs2_cooling_summary.csv`
+- `CS2B` = **Input Robustness (Monte Carlo)** (current deterministic post-training robustness under input perturbations).  
+  Reference run:
+  - `experiments/eval_outputs/cs2_robustness_publish/robustness_summary.csv`
+  - `experiments/eval_outputs/cs2_robustness_publish/cs2_rank_stability.csv`
+
+Current `eval_config.yaml` / narrative pipeline (`--stages ... cs2`) corresponds to **CS2B**.
 
 ---
 
