@@ -47,6 +47,8 @@ experiments/torch/*
 archive/
 
 # ----- Cache / temp -----
+.cache/
+.pycache/
 processed_cache_zarr/
 src/utils/cache/
 .tmp_mpl/
@@ -119,3 +121,33 @@ scripts/generate_paper_figures.py
 # Local/Server runs
 experiments/
 scripts/experiments/
+
+# ----- Operational & planning docs (not for external reproducibility) -----
+docs/PHASE_H_*
+docs/PENDING_*
+docs/POSTTRAINING_*
+docs/HIGH_RANKING_*
+docs/SERVER_REFRESH_*
+docs/q1_upgrade/
+docs/SERVER_ROADMAP.md
+plans/
+exp_01/
+.roo/
+figures_final_paper/
+
+# ----- Root-level server runner scripts -----
+deploy_gpu_server.sh
+run-local.sh
+run_*.sh
+
+# ----- Server-specific config overrides -----
+config/eval_config_exp3_*
+config/eval_config_refresh_*
+config/gpu_server_config.py
+
+# ----- Paper (LaTeX sources - kept local, not for public repo) -----
+Paper/
+
+# ----- Figure authoring intermediates -----
+figures/final_all_images/authoring/
+figures/final_all_images/candidates_flow/

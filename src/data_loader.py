@@ -8,11 +8,18 @@ import shutil
 import zarr
 import dask.array as da
 from dask.diagnostics import ProgressBar
-from scipy.interpolate import NearestNDInterpolator
+from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
 import os
 import pandas as pd
 from config.runtime import Config
 from src.data.base_pipeline import TemporalSamplerMixin
+from src.utils.static_features import (
+    parse_index_lat_lon,
+    read_static_cache_meta,
+    select_static_feature_names,
+    to_json_str,
+    write_static_cache_meta,
+)
 
 
 class BigDataPipeline:
@@ -65,8 +72,41 @@ class BigDataPipeline:
             cached = np.load(static_cache_path)
             if cached.shape[0] == dim_y and cached.shape[1] == dim_x:
                 self.ds_static_single = cached
-                print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
-                return
+                self.cfg.STATIC_CHANNELS = int(cached.shape[-1]) if cached.ndim == 3 else 1
+                cache_meta = read_static_cache_meta(static_cache_path)
+                schema_ok = True
+                if cache_meta:
+                    schema_cached = str(cache_meta.get("schema", "")).strip().lower()
+                    schema_expected = str(getattr(self.cfg, "STATIC_SCHEMA", "")).strip().lower()
+                    if schema_cached and schema_expected and schema_cached != schema_expected:
+                        print(
+                            f"   ⚠️ Static cache schema mismatch: cache={schema_cached}, expected={schema_expected}. "
+                            "Rebuilding static cache."
+                        )
+                        schema_ok = False
+                    print(
+                        "   ℹ️ Static cache metadata:"
+                        f" schema={cache_meta.get('schema')}, features={len(cache_meta.get('feature_names', []))}"
+                    )
+                else:
+                    guessed = [str(v) for v in getattr(self.cfg, "STATIC_FEATURES", [])]
+                    if len(guessed) != self.cfg.STATIC_CHANNELS:
+                        guessed = [f"static_ch_{i}" for i in range(self.cfg.STATIC_CHANNELS)]
+                    write_static_cache_meta(
+                        static_cache_path,
+                        {
+                            "schema": getattr(self.cfg, "STATIC_SCHEMA", "unspecified"),
+                            "schema_strict": bool(getattr(self.cfg, "STATIC_SCHEMA_STRICT", False)),
+                            "feature_names": guessed,
+                            "missing_features_filled_zero": [],
+                            "interpolation": "cached",
+                            "path_static": str(self.cfg.PATH_STATIC),
+                            "feature_order_json": to_json_str(guessed),
+                        },
+                    )
+                if schema_ok:
+                    print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
+                    return
             print(f"   ⚠️ Cache estático desalineado {cached.shape[:2]} != ({dim_y}, {dim_x}). Recalculando...")
 
         print("🗺️ Procesando e Interpolando datos estáticos (Esto se hará solo una vez)...")
@@ -111,8 +151,41 @@ class BigDataPipeline:
             cached = np.load(static_cache_path)
             if cached.shape[0] == dim_y and cached.shape[1] == dim_x:
                 self.ds_static_single = cached
-                print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
-                return
+                self.cfg.STATIC_CHANNELS = int(cached.shape[-1]) if cached.ndim == 3 else 1
+                cache_meta = read_static_cache_meta(static_cache_path)
+                schema_ok = True
+                if cache_meta:
+                    schema_cached = str(cache_meta.get("schema", "")).strip().lower()
+                    schema_expected = str(getattr(self.cfg, "STATIC_SCHEMA", "")).strip().lower()
+                    if schema_cached and schema_expected and schema_cached != schema_expected:
+                        print(
+                            f"   ⚠️ Static cache schema mismatch: cache={schema_cached}, expected={schema_expected}. "
+                            "Rebuilding static cache."
+                        )
+                        schema_ok = False
+                    print(
+                        "   ℹ️ Static cache metadata:"
+                        f" schema={cache_meta.get('schema')}, features={len(cache_meta.get('feature_names', []))}"
+                    )
+                else:
+                    guessed = [str(v) for v in getattr(self.cfg, "STATIC_FEATURES", [])]
+                    if len(guessed) != self.cfg.STATIC_CHANNELS:
+                        guessed = [f"static_ch_{i}" for i in range(self.cfg.STATIC_CHANNELS)]
+                    write_static_cache_meta(
+                        static_cache_path,
+                        {
+                            "schema": getattr(self.cfg, "STATIC_SCHEMA", "unspecified"),
+                            "schema_strict": bool(getattr(self.cfg, "STATIC_SCHEMA_STRICT", False)),
+                            "feature_names": guessed,
+                            "missing_features_filled_zero": [],
+                            "interpolation": "cached",
+                            "path_static": str(self.cfg.PATH_STATIC),
+                            "feature_order_json": to_json_str(guessed),
+                        },
+                    )
+                if schema_ok:
+                    print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
+                    return
             print(f"   ⚠️ Cache estático desalineado {cached.shape[:2]} != ({dim_y}, {dim_x}). Recalculando...")
 
         # --- GRID PARA INTERPOLACIÓN ---
@@ -135,23 +208,47 @@ class BigDataPipeline:
             target_points = np.column_stack((grid_y.ravel(), grid_x.ravel()))
         
         # 2. Cargar Static Zarr (tus datos de elevación/landuse)
-        ds_static = xr.open_zarr(self.cfg.PATH_STATIC)
+        ds_static = xr.open_zarr(self.cfg.PATH_STATIC, consolidated=True)
         indices = ds_static['index'].values
-        
-        # Parsear coordenadas del Zarr estático
-        lats = np.array([float(x.split('_')[0]) for x in indices])
-        lons = np.array([float(x.split('_')[1]) for x in indices])
+        lats, lons = parse_index_lat_lon(indices)
         points = np.column_stack((lats, lons))
-        
-        # 3. Interpolación
+
+        selected, missing = select_static_feature_names(ds_static, self.cfg)
+        requested = [str(v) for v in getattr(self.cfg, "STATIC_FEATURES", selected)]
+        if not requested:
+            requested = selected
+        if missing:
+            print(f"⚠️ Faltan static features del esquema: {missing}. Se rellenan con cero.")
+
+        interp_method = str(getattr(self.cfg, "STATIC_INTERP_METHOD", "linear_nearest_fallback")).strip().lower()
+
+        def _interp_feature(values: np.ndarray) -> np.ndarray:
+            if interp_method == "nearest":
+                nearest = NearestNDInterpolator(points, values)
+                return nearest(target_points)
+            try:
+                linear = LinearNDInterpolator(points, values, fill_value=np.nan)
+                out = linear(target_points)
+                if np.isnan(out).any():
+                    nearest = NearestNDInterpolator(points, values)
+                    out = np.where(np.isnan(out), nearest(target_points), out)
+                return out
+            except Exception:
+                nearest = NearestNDInterpolator(points, values)
+                return nearest(target_points)
+
+        # 3. Interpolación en orden estable por esquema.
         static_layers = []
-        for var in ds_static.data_vars:
-            if var == 'index': continue
-            values = ds_static[var].values
-            interpolator = NearestNDInterpolator(points, values)
-            interp_flat = interpolator(target_points)
+        final_feature_names = []
+        for var in requested:
+            if var not in ds_static.data_vars:
+                interp_flat = np.zeros((target_points.shape[0],), dtype=np.float32)
+            else:
+                values = ds_static[var].values
+                interp_flat = _interp_feature(values)
             static_layers.append(interp_flat.reshape(dim_y, dim_x))
-            
+            final_feature_names.append(var)
+
         self.ds_static_single = np.stack(static_layers, axis=-1).astype('float32')
         if np.isnan(self.ds_static_single).any():
             print("⚠️ Static data contiene NaNs. Rellenando con media por canal.")
@@ -160,12 +257,25 @@ class BigDataPipeline:
                 np.isnan(self.ds_static_single), ch_mean, self.ds_static_single
             )
             self.ds_static_single = np.nan_to_num(self.ds_static_single, nan=0.0, posinf=0.0, neginf=0.0)
+        self.cfg.STATIC_CHANNELS = int(self.ds_static_single.shape[-1])
         print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
 
         print(f"💾 Guardando caché estático en {static_cache_path}...")
         # Aseguramos que la carpeta exista
         os.makedirs(os.path.dirname(static_cache_path), exist_ok=True)
         np.save(static_cache_path, self.ds_static_single)
+        write_static_cache_meta(
+            static_cache_path,
+            {
+                "schema": getattr(self.cfg, "STATIC_SCHEMA", "unspecified"),
+                "schema_strict": bool(getattr(self.cfg, "STATIC_SCHEMA_STRICT", False)),
+                "feature_names": final_feature_names,
+                "missing_features_filled_zero": missing,
+                "interpolation": interp_method,
+                "path_static": str(self.cfg.PATH_STATIC),
+                "feature_order_json": to_json_str(final_feature_names),
+            },
+        )
         
         print(f"   ✅ Static Data Shape Final: {self.ds_static_single.shape}")
 

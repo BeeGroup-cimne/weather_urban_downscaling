@@ -1,7 +1,7 @@
-import xarray as xr
-import numpy as np
 import os
 import sys
+import numpy as np
+import xarray as xr
 
 # Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,27 +9,72 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from config.runtime import Config
 
-# ================= CONFIGURACIÓN =================
-# Ruta a tu archivo de datos estáticos actual
-INPUT_PATH = os.environ.get('STATIC_INPUT_PATH', Config.PATH_STATIC)
+# ================= CONFIG =================
+RAW_DEFAULT = os.path.join(Config.BASE_DIR, "data", "static", "weather_static_raw.zarr")
+ENGINEERED_DEFAULT = os.path.join(Config.BASE_DIR, "data", "static", "weather_static_engineered.zarr")
+INPUT_PATH = os.environ.get("STATIC_INPUT_PATH", RAW_DEFAULT)
+OUTPUT_PATH = os.environ.get("STATIC_OUTPUT_PATH", ENGINEERED_DEFAULT)
 
-# Ruta donde guardaremos el dataset mejorado
-OUTPUT_PATH = os.path.join(Config.BASE_DIR, 'data', 'static', 'weather_static_engineered.zarr')
+REQUIRED_RAW_VARS = [
+    "building_area_residential_percentile",
+    "n_dwellings_percentile",
+    "building_area_industrial_percentile",
+    "building_area_warehouse_parking_percentile",
+    "building_area_offices_percentile",
+    "building_area_commercial_percentile",
+    "building_area_healthcare_and_charity_percentile",
+    "building_area_religious_percentile",
+    "building_area_cultural_percentile",
+    "building_area_sports_facilities_percentile",
+    "building_area_entertainment_venues_percentile",
+    "building_area_leisure_and_hospitality_percentile",
+    "building_area_singular_building_percentile",
+    "n_floors_above_ground_percentile",
+]
 
 def engineer_static_features():
-    print(f"🔧 Iniciando Feature Engineering sobre: {INPUT_PATH}")
-    
-    # 1. Cargar el dataset original
+    print(f"Running static feature engineering from: {INPUT_PATH}")
+
+    if not os.path.exists(INPUT_PATH):
+        raise FileNotFoundError(
+            f"Static input not found: {INPUT_PATH}. "
+            f"Set STATIC_INPUT_PATH to a valid raw static zarr."
+        )
+
     ds = xr.open_zarr(INPUT_PATH)
-    print(f"   Variables originales: {len(ds.data_vars)}")
-    
-    # =========================================================
-    # 2. CREACIÓN DE INDICES COMPUESTOS (Agrupación Térmica)
-    # =========================================================
-    # Usamos la MEDIA de los percentiles para mantener la escala (0-1 o 0-100)
-    # Si sumáramos, podríamos tener valores desorbitados.
-    
-    print("   ⚗️  Fusionando categorías de edificios...")
+    original_vars = set(str(v) for v in ds.data_vars.keys())
+    missing_raw = [v for v in REQUIRED_RAW_VARS if v not in original_vars]
+
+    if missing_raw:
+        engineered_vars = [
+            "elevation",
+            "height_index",
+            "ndvi_mean",
+            "ndvi_min",
+            "residential_index",
+            "industrial_index",
+            "services_index",
+            "leisure_index",
+        ]
+        if set(engineered_vars).issubset(original_vars):
+            print("Input already looks engineered; writing canonical copy.")
+            ds_final = ds[engineered_vars].astype(np.float32)
+            ds_final.attrs["static_engineering_version"] = "v1_already_engineered"
+            ds_final.attrs["static_engineering_source"] = INPUT_PATH
+            if "index" in ds_final.coords:
+                ds_final.coords["index"] = ds_final.coords["index"].astype(str)
+            if os.path.exists(OUTPUT_PATH):
+                import shutil
+                shutil.rmtree(OUTPUT_PATH)
+            ds_final.to_zarr(OUTPUT_PATH, mode="w", consolidated=True)
+            print(f"Wrote engineered static dataset to: {OUTPUT_PATH}")
+            return
+        raise RuntimeError(
+            "Input dataset does not contain required raw static variables for engineering. "
+            f"Missing: {missing_raw}"
+        )
+
+    print("Building composite static indices...")
 
     # A. INDICE RESIDENCIAL (Calor nocturno, calefacción)
     # Combina área residencial + número de viviendas
@@ -61,13 +106,7 @@ def engineer_static_features():
         ds['building_area_singular_building_percentile']
     ) / 4.0
 
-    # =========================================================
-    # 3. VARIABLES FÍSICAS (Geometría y Terreno)
-    # =========================================================
-    print("   📐 Procesando variables físicas...")
-
-    # A. PROXY DE ALTURA (Vital para la sombra)
-    # Renombramos para que tenga sentido físico
+    # Physical proxy
     ds['height_index'] = ds['n_floors_above_ground_percentile']
 
     # B. TOPOGRAFÍA
@@ -80,10 +119,7 @@ def engineer_static_features():
     # ds['ndvi_mean'] ya existe
     # ds['ndvi_min'] ya existe
 
-    # =========================================================
-    # 4. LIMPIEZA Y SELECCIÓN FINAL
-    # =========================================================
-    # Lista de las variables "Campeonas" que nos quedamos
+    # Final keep list
     keep_vars = [
         'elevation',
         'height_index',
@@ -95,45 +131,27 @@ def engineer_static_features():
         'leisure_index'
     ]
 
-    # Crear nuevo dataset solo con lo que importa
     ds_final = ds[keep_vars]
-    
-    # Convertir a float32 para ahorrar memoria (GPU Friendly)
     ds_final = ds_final.astype(np.float32)
-    
 
-    # =========================================================
-    # 🚑 FIX PARA EL ERROR DE ZARR (TypeError: found 238)
-    # =========================================================
-    print("   🚑 Reparando tipos de datos en coordenadas...")
-    # El error dice que el 'index' tiene objetos no-string. Lo forzamos a string.
+    print("Fixing coordinate dtypes...")
     if 'index' in ds_final.coords:
         ds_final.coords['index'] = ds_final.coords['index'].astype(str)
-    
-    # Asegurarnos de limpiar cualquier codificación previa que pudiera molestar
     for var in ds_final.coords:
         if 'chunks' in ds_final.coords[var].encoding:
             del ds_final.coords[var].encoding['chunks']
 
-            
-    # =========================================================
-    
-    
+    ds_final.attrs["static_engineering_version"] = "v1"
+    ds_final.attrs["static_engineering_source"] = INPUT_PATH
 
-    print("\n📊 Dataset Final Generado:")
-    print(ds_final)
-    
-    # =========================================================
-    # 5. GUARDADO
-    # =========================================================
     if os.path.exists(OUTPUT_PATH):
         import shutil
-        print(f"   ⚠️ Borrando versión anterior en {OUTPUT_PATH}")
+        print(f"Removing previous output at {OUTPUT_PATH}")
         shutil.rmtree(OUTPUT_PATH)
 
-    print(f"💾 Guardando nuevo Zarr en: {OUTPUT_PATH}")
+    print(f"Writing engineered static zarr to: {OUTPUT_PATH}")
     ds_final.to_zarr(OUTPUT_PATH, mode='w', consolidated=True)
-    print("✅ ¡Feature Engineering completado con éxito!")
+    print("Static feature engineering completed.")
 
 if __name__ == "__main__":
     engineer_static_features()

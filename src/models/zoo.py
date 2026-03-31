@@ -426,7 +426,7 @@ class ModelZoo:
         # Conv 1x1 para colapsar canales a 1 (Temperatura HR)
         out = TimeDistributed(Conv2D(1, (1, 1), activation='linear'))(c6)
 
-        model = Model([inp_dyn, inp_st], out, name="Exp4_Hybrid_UNet_LSTM")
+        model = Model([inp_dyn, inp_st], out, name="ConvLSTM_UNet")
         model.compile(optimizer=cls.get_optimizer(Config.LEARNING_RATE), loss='mse', metrics=['mae'])
         return model    
 

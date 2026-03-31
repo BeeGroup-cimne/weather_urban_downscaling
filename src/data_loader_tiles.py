@@ -9,6 +9,7 @@ import tensorflow as tf
 from config.runtime import Config
 from src.data_loader import BigDataPipeline
 from src.data.base_pipeline import TemporalSamplerMixin
+from src.utils.static_features import read_static_cache_meta, robust_unit_scale, select_static_feature_names
 
 
 class TileDataPipeline:
@@ -17,6 +18,7 @@ class TileDataPipeline:
         self.cache_dir = self.cfg.PATH_CACHE
         self.static_cache_path = self.cfg.STATIC_CACHE_PATH
         self.static_norm = None
+        self.static_raw = None
         self.static_var_names = None
         self.weight_map = None
         self.weight_cdf = None
@@ -41,19 +43,25 @@ class TileDataPipeline:
             static = static[..., np.newaxis]
         if static.shape[0] != hr_shape[0] or static.shape[1] != hr_shape[1]:
             static = tf.image.resize(static, hr_shape, method="bilinear").numpy()
+        self.static_raw = static.astype(np.float32)
         mean_st = np.mean(static, axis=(0, 1), keepdims=True)
         std_st = np.std(static, axis=(0, 1), keepdims=True)
         self.static_norm = (static - mean_st) / (std_st + 1e-6)
         if np.isnan(self.static_norm).any():
             self.static_norm = np.nan_to_num(self.static_norm, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Keep static var names in the same order used by BigDataPipeline.process_static_data()
-        # (it iterates ds_static.data_vars). We re-open the zarr to read that order.
-        try:
-            ds_static = xr.open_zarr(self.cfg.PATH_STATIC, consolidated=True)
-            self.static_var_names = [str(v) for v in ds_static.data_vars.keys()]
-        except Exception:
-            self.static_var_names = None
+        # Prefer metadata written with static cache; fallback to schema selection from zarr.
+        meta = read_static_cache_meta(self.static_cache_path)
+        if meta and isinstance(meta.get("feature_names"), list):
+            self.static_var_names = [str(v) for v in meta["feature_names"]]
+        else:
+            try:
+                ds_static = xr.open_zarr(self.cfg.PATH_STATIC, consolidated=True)
+                selected, _ = select_static_feature_names(ds_static, self.cfg)
+                requested = [str(v) for v in getattr(self.cfg, "STATIC_FEATURES", selected)]
+                self.static_var_names = requested if requested else selected
+            except Exception:
+                self.static_var_names = None
         return self.static_norm
 
     def _build_weight_map(self, sampler="static_weighted", hr_shape=None):
@@ -64,8 +72,8 @@ class TileDataPipeline:
         elif sampler == "uhi_proxy":
             # Heatwave/UHI-oriented proxy:
             # emphasize built-up / roughness, de-emphasize vegetation (cooling).
-            # Uses normalized static channels when names are available; otherwise falls back.
-            static = self.static_norm
+            # Uses physical-scale static channels when names are available.
+            static = self.static_raw if self.static_raw is not None else self.static_norm
             names = self.static_var_names or []
 
             def _idx(name: str):
@@ -80,26 +88,34 @@ class TileDataPipeline:
             idx_r = _idx("roughness")
             idx_svf = _idx("svf")
 
-            if idx_bd is None or idx_ndvi is None:
+            idx_imp = _idx("impervious_fraction")
+            idx_hw = _idx("h_over_w")
+
+            if idx_bd is None and idx_imp is None:
                 # Not enough info; default to generic static_weighted
                 weight = np.mean(np.abs(static), axis=-1)
             else:
-                bd = static[:, :, idx_bd]
-                ndvi = static[:, :, idx_ndvi]
-                h = static[:, :, idx_h] if idx_h is not None else 0.0
-                r = static[:, :, idx_r] if idx_r is not None else 0.0
-                svf = static[:, :, idx_svf] if idx_svf is not None else 0.0
+                built = static[:, :, idx_imp] if idx_imp is not None else static[:, :, idx_bd]
+                ndvi = static[:, :, idx_ndvi] if idx_ndvi is not None else np.zeros_like(built)
+                h = static[:, :, idx_h] if idx_h is not None else np.zeros_like(built)
+                r = static[:, :, idx_r] if idx_r is not None else np.zeros_like(built)
+                svf = static[:, :, idx_svf] if idx_svf is not None else np.ones_like(built)
+                hw = static[:, :, idx_hw] if idx_hw is not None else np.zeros_like(built)
 
-                # Combine: built-up + height + roughness + (1-ndvi) + canyon-ness (1-svf)
-                # Use abs() on SVF/NDVI terms to keep weights non-negative even if normalized.
+                built_n = robust_unit_scale(built)
+                ndvi_n = robust_unit_scale(ndvi)
+                h_n = robust_unit_scale(h)
+                r_n = robust_unit_scale(r)
+                canyon_n = robust_unit_scale((1.0 - np.clip(svf, 0.0, 1.0)) + hw)
+
                 score = (
-                    0.45 * bd
-                    + 0.20 * h
-                    + 0.15 * r
-                    + 0.15 * np.abs(1.0 - ndvi)
-                    + 0.05 * np.abs(1.0 - svf)
+                    0.45 * built_n
+                    + 0.25 * canyon_n
+                    + 0.15 * h_n
+                    + 0.10 * r_n
+                    + 0.05 * (1.0 - ndvi_n)
                 )
-                weight = score
+                weight = np.nan_to_num(score, nan=0.0, posinf=0.0, neginf=0.0)
         elif sampler == "error_weighted":
             err_path = getattr(self.cfg, "TILE_ERROR_MAP_PATH", "")
             if not err_path or not os.path.exists(err_path):

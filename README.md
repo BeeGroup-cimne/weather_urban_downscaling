@@ -1,6 +1,10 @@
 # Weather Urban Downscaling
 
-Urban thermal downscaling from low-resolution data (ERA5-Land / UrbClim) to HR maps with deep learning and paper-ready evaluation.
+**Physics-Aware Spatiotemporal Downscaling of Urban Microclimates using Vision Mamba (U-Net + SSM)**
+
+Reproducing results for the paper. Benchmarks Vision Mamba (Selective State Space Models) against ConvLSTM, Transformer, and static U-Net baselines for 100-m temperature field reconstruction over the Barcelona Metropolitan Area from ERA5-Land forcings.
+
+**Key results** (Experiment 3, Full-Frame, Mamba T=12h): MAE **0.513 °C** · RMSE **0.677 °C** · SSIM **0.848** — a **50% spatial error reduction** vs. static U-Net baseline.
 
 ---
 

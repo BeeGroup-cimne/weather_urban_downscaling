@@ -26,6 +26,9 @@ MODEL_ALIAS = {
     "convlstm": "lstm",
     "baseline_nearest": "baseline_nearest",
     "baseline_bilinear": "baseline_bilinear",
+    "xgboost": "xgboost",
+    "xgb": "xgboost",
+    "histgbt": "xgboost",
     "unet": "unet",
     "transformer": "transformer",
     "mamba": "mamba",
@@ -128,6 +131,8 @@ def _model_type(model_key: str) -> Tuple[str, int | None]:
         return "mamba", 12
     if mk == "mamba_seq6":
         return "mamba", 6
+    if mk in {"xgb", "histgbt"}:
+        return "xgboost", None
     return mk, None
 
 
@@ -360,56 +365,107 @@ def _run_exp2(
         model_type, forced_seq = _model_type(model)
         model_out = os.path.join(out_dir, model)
         _ensure_dir(model_out)
-        is_baseline = model.startswith("baseline_")
+        model_key = str(model).strip().lower()
+        is_baseline = model_key.startswith("baseline_")
+        is_xgboost = model_key in {"xgboost", "xgb", "histgbt"}
         ckpt = ""
-        if not is_baseline:
+        if not is_baseline and not is_xgboost:
             entries = _resolve_checkpoint_entries(checkpoint_set, model, seed=seed)
             if not entries:
                 raise SystemExit(f"No checkpoint for model '{model}' (seed={seed}) in Exp2.")
             ckpt = _resolve_path(root, entries[0][1])
             if not os.path.exists(ckpt):
                 raise SystemExit(f"Checkpoint not found for Exp2: {ckpt}")
-        ckpt_used[model] = ckpt if ckpt else "__baseline__"
+        ckpt_used[model] = "__baseline__" if is_baseline else ("__xgboost__" if is_xgboost else ckpt)
 
-        cmd = [
-            python_bin,
-            "scripts/evaluation/evaluate_stations_grib.py",
-            "--model-type", model_type,
-            "--split", str(stage_cfg.get("split", "test")),
-            "--max-samples", str(int(stage_cfg.get("max_samples", 1000))),
-            "--stride", str(int(stage_cfg.get("stride", 1))),
-            "--extraction-method", str(stage_cfg.get("extraction_method", "bilinear")),
-            "--day-start-hour", str(int(stage_cfg.get("day_start_hour", 8))),
-            "--day-end-hour", str(int(stage_cfg.get("day_end_hour", 19))),
-            "--time-offset-hours", str(float(stage_cfg.get("time_offset_hours", 0.0))),
-            "--out-dir", model_out,
-        ]
-        if "footprint_radius_px" in stage_cfg:
-            cmd.extend(["--footprint-radius-px", str(int(stage_cfg.get("footprint_radius_px", 0)))])
-        if "footprint_sigma_px" in stage_cfg:
-            cmd.extend(["--footprint-sigma-px", str(float(stage_cfg.get("footprint_sigma_px", 1.0)))])
         seq_len = int(stage_cfg.get("seq_len", 0)) or forced_seq
-        if seq_len:
-            cmd.extend(["--seq-len", str(seq_len)])
-        if heatwave_times_file:
-            cmd.extend(["--heatwave-times-file", heatwave_times_file])
-        if stations_obs_csv:
-            cmd.extend(["--stations-obs-csv", stations_obs_csv])
+        if is_xgboost:
+            xgb_backend = str(stage_cfg.get("xgboost_backend", "xgboost"))
+            if model_key == "histgbt" and "xgboost_backend" not in stage_cfg:
+                xgb_backend = "histgbt"
+            cmd = [
+                python_bin,
+                "scripts/evaluation/evaluate_stations_xgboost.py",
+                "--split", str(stage_cfg.get("split", "test")),
+                "--max-samples", str(int(stage_cfg.get("max_samples", 1000))),
+                "--max-train-samples", str(int(stage_cfg.get("xgboost_max_train_samples", 0))),
+                "--max-val-samples", str(int(stage_cfg.get("xgboost_max_val_samples", 0))),
+                "--max-train-points", str(int(stage_cfg.get("xgboost_max_train_points", 0))),
+                "--max-val-points", str(int(stage_cfg.get("xgboost_max_val_points", 0))),
+                "--max-eval-points", str(int(stage_cfg.get("xgboost_max_eval_points", 0))),
+                "--stride", str(int(stage_cfg.get("stride", 1))),
+                "--extraction-method", str(stage_cfg.get("extraction_method", "bilinear")),
+                "--day-start-hour", str(int(stage_cfg.get("day_start_hour", 8))),
+                "--day-end-hour", str(int(stage_cfg.get("day_end_hour", 19))),
+                "--time-offset-hours", str(float(stage_cfg.get("time_offset_hours", 0.0))),
+                "--backend", xgb_backend,
+                "--n-estimators", str(int(stage_cfg.get("xgboost_n_estimators", 500))),
+                "--learning-rate", str(float(stage_cfg.get("xgboost_learning_rate", 0.05))),
+                "--max-depth", str(int(stage_cfg.get("xgboost_max_depth", 8))),
+                "--min-child-weight", str(float(stage_cfg.get("xgboost_min_child_weight", 1.0))),
+                "--subsample", str(float(stage_cfg.get("xgboost_subsample", 0.9))),
+                "--colsample-bytree", str(float(stage_cfg.get("xgboost_colsample_bytree", 0.9))),
+                "--reg-alpha", str(float(stage_cfg.get("xgboost_reg_alpha", 0.0))),
+                "--reg-lambda", str(float(stage_cfg.get("xgboost_reg_lambda", 1.0))),
+                "--gamma", str(float(stage_cfg.get("xgboost_gamma", 0.0))),
+                "--tree-method", str(stage_cfg.get("xgboost_tree_method", "hist")),
+                "--n-jobs", str(int(stage_cfg.get("xgboost_n_jobs", -1))),
+                "--seed", str(int(stage_cfg.get("seed", seed))),
+                "--early-stopping-rounds", str(int(stage_cfg.get("xgboost_early_stopping_rounds", 50))),
+                "--out-dir", model_out,
+            ]
+            if seq_len:
+                cmd.extend(["--seq-len", str(seq_len)])
+            if heatwave_times_file:
+                cmd.extend(["--heatwave-times-file", heatwave_times_file])
+            if stations_obs_csv:
+                cmd.extend(["--stations-obs-csv", stations_obs_csv])
+            else:
+                cmd.extend(["--stations-grib", stations_grib])
+                if stations_meta_csv:
+                    cmd.extend(["--stations-csv", stations_meta_csv])
+            if str(stage_cfg.get("bias_correction_mode", "none")) != "none":
+                cmd.append("--bias-correction")
+            if stage_cfg.get("save_hourly_traces", False):
+                cmd.append("--save-hourly-traces")
         else:
-            cmd.extend(["--stations-grib", stations_grib])
-            if stations_meta_csv:
-                cmd.extend(["--stations-csv", stations_meta_csv])
-
-        bias_mode = str(stage_cfg.get("bias_correction_mode", "none"))
-        if bias_mode != "none":
-            cmd.append("--bias-correction")
-            cmd.extend(["--bias-correction-mode", bias_mode])
-        if stage_cfg.get("save_hourly_traces", False):
-            cmd.append("--save-hourly-traces")
-        if is_baseline:
-            cmd.append("--baseline")
-        else:
-            cmd.extend(["--model-path", ckpt])
+            cmd = [
+                python_bin,
+                "scripts/evaluation/evaluate_stations_grib.py",
+                "--model-type", model_type,
+                "--split", str(stage_cfg.get("split", "test")),
+                "--max-samples", str(int(stage_cfg.get("max_samples", 1000))),
+                "--stride", str(int(stage_cfg.get("stride", 1))),
+                "--extraction-method", str(stage_cfg.get("extraction_method", "bilinear")),
+                "--day-start-hour", str(int(stage_cfg.get("day_start_hour", 8))),
+                "--day-end-hour", str(int(stage_cfg.get("day_end_hour", 19))),
+                "--time-offset-hours", str(float(stage_cfg.get("time_offset_hours", 0.0))),
+                "--out-dir", model_out,
+            ]
+            if "footprint_radius_px" in stage_cfg:
+                cmd.extend(["--footprint-radius-px", str(int(stage_cfg.get("footprint_radius_px", 0)))])
+            if "footprint_sigma_px" in stage_cfg:
+                cmd.extend(["--footprint-sigma-px", str(float(stage_cfg.get("footprint_sigma_px", 1.0)))])
+            if seq_len:
+                cmd.extend(["--seq-len", str(seq_len)])
+            if heatwave_times_file:
+                cmd.extend(["--heatwave-times-file", heatwave_times_file])
+            if stations_obs_csv:
+                cmd.extend(["--stations-obs-csv", stations_obs_csv])
+            else:
+                cmd.extend(["--stations-grib", stations_grib])
+                if stations_meta_csv:
+                    cmd.extend(["--stations-csv", stations_meta_csv])
+            bias_mode = str(stage_cfg.get("bias_correction_mode", "none"))
+            if bias_mode != "none":
+                cmd.append("--bias-correction")
+                cmd.extend(["--bias-correction-mode", bias_mode])
+            if stage_cfg.get("save_hourly_traces", False):
+                cmd.append("--save-hourly-traces")
+            if is_baseline:
+                cmd.append("--baseline")
+            else:
+                cmd.extend(["--model-path", ckpt])
         _run(cmd, cwd=root)
 
     # Write explicit checkpoints manifest for reproducibility.

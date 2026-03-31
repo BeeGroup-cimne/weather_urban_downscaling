@@ -47,6 +47,45 @@ class Config:
     STATS_PATH = str(BASE_DIR / "data" / "processed" / "stats_config.npz")
     STATIC_CACHE_PATH = str(BASE_DIR / "data" / "processed" / "static_processed.npy")
 
+    # Esquema de variables estáticas.
+    # - "legacy": mantiene orden histórico para compatibilidad de checkpoints.
+    # - "v2": versión mejorada (menos redundante y con variables morfológicas nuevas).
+    STATIC_SCHEMA = os.getenv("STATIC_SCHEMA", "legacy").strip().lower()
+    STATIC_SCHEMA_STRICT = os.getenv("STATIC_SCHEMA_STRICT", "0").strip().lower() in {"1", "true", "yes", "y", "on"}
+    STATIC_INTERP_METHOD = os.getenv("STATIC_INTERP_METHOD", "linear_nearest_fallback").strip().lower()
+
+    STATIC_FEATURES_LEGACY = [
+        "avg_height",
+        "building_density",
+        "elevation",
+        "height_index",
+        "industrial_index",
+        "leisure_index",
+        "max_levels",
+        "ndvi_mean",
+        "ndvi_min",
+        "residential_index",
+        "roughness",
+        "services_index",
+        "svf",
+    ]
+    STATIC_FEATURES_V2 = [
+        "avg_height",
+        "building_density",
+        "impervious_fraction",
+        "elevation",
+        "height_index",
+        "industrial_index",
+        "leisure_index",
+        "ndvi_mean",
+        "ndvi_min",
+        "residential_index",
+        "services_index",
+        "svf",
+        "h_over_w",
+    ]
+    STATIC_FEATURES = STATIC_FEATURES_V2 if STATIC_SCHEMA == "v2" else STATIC_FEATURES_LEGACY
+
     # ---------------------------------------------------------
     # 2.1 SPLITS TEMPORALES (para paper)
     # ---------------------------------------------------------
@@ -80,7 +119,7 @@ class Config:
     HR_SHAPE = (251, 251)
     LR_SHAPE = (4, 3) 
     CHANNELS = 9
-    STATIC_CHANNELS = 13
+    STATIC_CHANNELS = len(STATIC_FEATURES)
     UNET_BASE_FILTERS = 32
 
     # Regularización / generalización
