@@ -1,0 +1,45 @@
+{
+  "title": "Weather Urban Downscaling: Recurrent and State-Space Architectures for Urban Air-Temperature Downscaling",
+  "description": "Code companion for benchmarking U-Net, ConvLSTM, Transformer, and Mamba-based architectures for hourly 100-m urban air-temperature downscaling over the Barcelona Metropolitan Area.",
+  "creators": [
+    {
+      "name": "Cardona, Kerin",
+      "affiliation": "Centre Internacional de Metodes Numerics en Enginyeria (CIMNE)"
+    },
+    {
+      "name": "Mor, Gerard",
+      "affiliation": "Centre Internacional de Metodes Numerics en Enginyeria (CIMNE)"
+    },
+    {
+      "name": "Cipriano, Jordi",
+      "affiliation": "Centre Internacional de Metodes Numerics en Enginyeria (CIMNE)"
+    },
+    {
+      "name": "Solsona, Francesc",
+      "affiliation": "Universitat de Lleida (UdL)"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "urban climate",
+    "urban heat",
+    "air temperature",
+    "downscaling",
+    "heatwaves",
+    "ERA5-Land",
+    "UrbClim",
+    "Mamba",
+    "ConvLSTM",
+    "state-space models"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/BeeGroup-cimne/weather_urban_downscaling",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ],
+  "upload_type": "software",
+  "access_right": "open",
+  "language": "eng"
+}

@@ -2,11 +2,34 @@
 
 **Physics-Aware Spatiotemporal Downscaling of Urban Microclimates using Vision Mamba (U-Net + SSM)**
 
-Reproducing results for the paper. Benchmarks Vision Mamba (Selective State Space Models) against ConvLSTM, Transformer, and static U-Net baselines for 100-m temperature field reconstruction over the Barcelona Metropolitan Area from ERA5-Land forcings.
+Reproducibility code for benchmarking recurrent and state-space architectures for hourly urban air-temperature downscaling over the Barcelona Metropolitan Area. The repository benchmarks Vision Mamba (Selective State Space Models) against ConvLSTM, Transformer, U-Net, and deterministic interpolation baselines for 100-m temperature field reconstruction from ERA5-Land forcings and static urban morphology.
 
 **Key results** (Experiment 3, Full-Frame, Mamba T=12h): MAE **0.513 °C** · RMSE **0.677 °C** · SSIM **0.848** — a **50% spatial error reduction** vs. static U-Net baseline.
 
 ---
+
+## Public Release Scope
+
+This repository is the public code companion for the Urban Climate manuscript:
+
+> Benchmarking Recurrent and State-Space Architectures for Reliable Spatiotemporal Downscaling of Urban Air Temperature in Heatwave Events
+
+The public release includes:
+
+- training, inference, evaluation, and figure-generation scripts;
+- configuration files for the consolidated evaluation pipeline;
+- lightweight reference outputs and manifests needed to audit the reported workflow;
+- documentation for reproducing the experiment sequence.
+
+The final editorial submission package is kept locally under `Paper/` and is intentionally ignored by Git. Submit manuscript files through the journal portal, not through this repository.
+
+### Data Availability
+
+ERA5-Land forcing data are publicly available from the Copernicus Climate Change Service Climate Data Store. The high-resolution UrbClim target fields used in the study were provided under a restricted data-sharing agreement and are not redistributed in this repository. Full numerical replication therefore requires access to the same restricted target data, while the code, configuration, evaluation logic, and reporting pipeline are public.
+
+### Citation
+
+Use `CITATION.cff` for software citation metadata. Until the manuscript receives a DOI, cite the repository release/tag together with the submitted manuscript title.
 
 ## Current Status (Consolidated)
 
@@ -67,7 +90,7 @@ The two baseline models are minimum controls used to quantify the added value of
 ### Local setup (example)
 
 ```bash
-git clone https://github.com/your-org/weather_urban_downscaling.git
+git clone https://github.com/BeeGroup-cimne/weather_urban_downscaling.git
 cd weather_urban_downscaling
 
 python -m venv .venv
@@ -325,6 +348,24 @@ Build deterministic publication bundle:
 ./.venv/bin/python scripts/evaluation/build_publication_bundle.py \
   --config config/eval_config.yaml \
   --out dist/publication_eval_bundle.tar.gz
+```
+
+### Release Checklist
+
+Before creating a public release:
+
+1. Ensure `main` is clean: `git status --short --branch`.
+2. Run the minimal CI checks locally if dependencies are available.
+3. Build or verify the reproducibility manifest.
+4. Create a signed or annotated tag for the manuscript snapshot.
+5. Archive the release with Zenodo only after the public GitHub release is final.
+
+Recommended tag format:
+
+```bash
+git tag -a urban-climate-submission-YYYY-MM-DD \
+  -m "Urban Climate manuscript submission snapshot"
+git push origin urban-climate-submission-YYYY-MM-DD
 ```
 
 ---

@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the repository release and the associated manuscript."
+title: "Weather Urban Downscaling"
+type: software
+authors:
+  - family-names: Cardona
+    given-names: Kerin
+    affiliation: "Centre Internacional de Metodes Numerics en Enginyeria (CIMNE)"
+  - family-names: Mor
+    given-names: Gerard
+    affiliation: "Centre Internacional de Metodes Numerics en Enginyeria (CIMNE)"
+  - family-names: Cipriano
+    given-names: Jordi
+    affiliation: "Centre Internacional de Metodes Numerics en Enginyeria (CIMNE)"
+  - family-names: Solsona
+    given-names: Francesc
+    affiliation: "Universitat de Lleida (UdL)"
+repository-code: "https://github.com/BeeGroup-cimne/weather_urban_downscaling"
+url: "https://github.com/BeeGroup-cimne/weather_urban_downscaling"
+license: MIT
+date-released: 2026-04-16
+keywords:
+  - urban climate
+  - downscaling
+  - heatwaves
+  - Mamba
+  - ConvLSTM
+  - ERA5-Land
+  - UrbClim
+abstract: "Code companion for benchmarking recurrent and state-space architectures for hourly urban air-temperature downscaling over the Barcelona Metropolitan Area."
+preferred-citation:
+  type: article
+  title: "Benchmarking Recurrent and State-Space Architectures for Reliable Spatiotemporal Downscaling of Urban Air Temperature in Heatwave Events"
+  authors:
+    - family-names: Cardona
+      given-names: Kerin
+    - family-names: Mor
+      given-names: Gerard
+    - family-names: Cipriano
+      given-names: Jordi
+    - family-names: Solsona
+      given-names: Francesc
+  year: 2026
+  journal: "Urban Climate"
+  notes: "Manuscript submitted for review."
