@@ -1,3 +1,0 @@
-model,model_type,checkpoint,status
-mamba,mamba,experiments/models/Ablation_MAMBA_Legacy_best.h5,ok
-unet,unet,experiments/models/Ablation_UNET_Legacy_best.h5,ok

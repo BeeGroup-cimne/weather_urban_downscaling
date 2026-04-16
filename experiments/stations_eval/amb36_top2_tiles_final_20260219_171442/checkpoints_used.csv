@@ -1,3 +1,0 @@
-model,model_type,checkpoint,status
-mamba,mamba,/Users/kerincardona/weather_urban_downscaling/experiments/models/Tiles_MAMBA_best.h5,ok
-unet,unet,/Users/kerincardona/weather_urban_downscaling/experiments/models/Tiles_UNET_best.h5,ok

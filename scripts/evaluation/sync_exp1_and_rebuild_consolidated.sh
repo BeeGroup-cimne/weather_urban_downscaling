@@ -9,7 +9,7 @@ set -euo pipefail
 # Optional:
 #   REMOTE_ROOT=/hdd/weather_urban_downscaling
 #   PUBLISH_RUN=publish_run_20260220_220458
-#   LOCAL_ROOT=/Users/kerincardona/weather_urban_downscaling
+#   LOCAL_ROOT=/path/to/weather_urban_downscaling
 #   EXP2_DIR=experiments/stations_eval/experiment2_YYYYMMDD_HHMMSS
 #   CS1_DIR=experiments/heatwaves/casestudy1_YYYYMMDD_HHMMSS
 #   EXP3_DIR=experiments/fullframe/experiment3_YYYYMMDD_HHMMSS

@@ -221,7 +221,7 @@ services:
       - "8888:8888"
     shm_size: '4gb'
     command: >
-      bash -c " pip install jupyter jupyterlab; cd /app; jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' "
+      bash -c "pip install jupyter jupyterlab; cd /app; jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root"
     restart: "no"
     profiles:
       - development

@@ -19,13 +19,15 @@ This release snapshot supports the manuscript:
 
 - Model code for U-Net, ConvLSTM, Transformer, and Mamba variants.
 - Evaluation scripts and configuration files.
-- Lightweight reference outputs and manifests suitable for audit.
+- Lightweight metadata and manifests suitable for audit.
+- Regenerable output folders are excluded from the public repository.
 - Documentation for running the paper evaluation workflow.
 
 ### Not Included
 
 - Restricted high-resolution UrbClim target data.
 - Large trained checkpoints and regenerable experiment outputs.
+- Weather-station CSVs and heatwave timestamp files generated from external sources.
 - The local journal-submission folder `Paper/`, which remains ignored by Git.
 
 ### Recommended Tag
