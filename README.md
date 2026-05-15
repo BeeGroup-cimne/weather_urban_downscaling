@@ -76,7 +76,7 @@ The two baseline models are minimum controls used to quantify the added value of
 | I1 | `scripts/inference/run_inference_tiles_fullframe.py` | Full-frame reconstruction from tile-trained models + comparison maps | all + baselines |
 | V1 | `scripts/evaluation/evaluate_test_set.py` | MAE/RMSE/SSIM evaluation on train/val/test splits | unet, convlstm, transformer, mamba |
 | S1 | `scripts/overfit_sanity.py` / `scripts/overfit_fixed_tile.py` | Training sanity checks | multiple |
-| H1 | `scripts/derive_aemet_heatwaves.py` | Build heatwave event timestamps from stations | n/a |
+| H1 | `scripts/tools/derive_aemet_heatwaves.py` | Build heatwave event timestamps from stations | n/a |
 
 ---
 
@@ -374,6 +374,21 @@ git push origin urban-climate-submission-YYYY-MM-DD
 
 ## Server Support
 
+For the simplest production path, use Docker Compose + GitHub Actions + GHCR:
+
+```bash
+docker compose -f docker/compose.production.yml run --rm smoke
+docker compose -f docker/compose.production.yml run --rm forecast-fetch
+docker compose -f docker/compose.production.yml run --rm forecast-inference
+docker compose -f docker/compose.production.yml run --rm data-health
+docker compose -f docker/compose.production.yml run --rm tiles-heatwave
+docker compose -f docker/compose.production.yml run --rm heatwave-alerts
+docker compose -f docker/compose.production.yml up -d heatwave-alerts-live
+docker compose -f docker/compose.production.yml up -d alert-dashboard
+```
+
+See `docs/DEPLOYMENT_SIMPLE.md` for CI/CD, rollback, alert outputs, and pre-launch checks.
+
 ### Build a server bundle
 
 ```bash
@@ -401,4 +416,4 @@ This includes scripts/config and excludes heavy outputs (models/figures/datasets
 
 ## License
 
-MIT. See `LICENSE`.
+EUPL v1.2. See `LICENSE`.
