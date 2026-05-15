@@ -417,3 +417,5 @@ This includes scripts/config and excludes heavy outputs (models/figures/datasets
 ## License
 
 EUPL v1.2. See `LICENSE`.
+
+© 2026 Kerin Cardona and contributors
