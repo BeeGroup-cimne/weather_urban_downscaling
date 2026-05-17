@@ -1,0 +1,13 @@
+{
+  "openrouter_api_key": "sk-or-v1-TU_API_KEY_AQUI",
+  "models": [
+    "anthropic/claude-sonnet-latest",
+    "openai/gpt-latest",
+    "qwen/qwen3.6-plus",
+    "deepseek/deepseek-v4-flash",
+    "google/gemini-flash-latest",
+    "x-ai/grok-4.20"
+  ],
+  "schedule": "weekly",
+  "task_papers_refresh": "monthly"
+}

@@ -1,0 +1,227 @@
+name: weather-urban-downscaling
+
+x-runtime-env: &runtime-env
+  TF_USE_LEGACY_KERAS: "1"
+  PYTHONUNBUFFERED: "1"
+  MPLBACKEND: Agg
+  MPLCONFIGDIR: /tmp/matplotlib
+  TF_GPU_ALLOCATOR: cuda_malloc_async
+  CUDA_VISIBLE_DEVICES: "${CUDA_VISIBLE_DEVICES:-0}"
+
+x-gpu: &gpu
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: 1
+          capabilities: [gpu]
+
+services:
+  data-health:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../data:/app/data
+      - ../experiments:/app/experiments
+    environment:
+      <<: *runtime-env
+    command: python scripts/tools/check_data_health.py
+    restart: "no"
+
+  smoke:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../data:/app/data
+      - ../experiments:/app/experiments
+    environment:
+      <<: *runtime-env
+    command: python scripts/ops/healthcheck.py --runtime
+    restart: "no"
+
+  forecast-fetch:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../data:/app/data
+      - ../config/forecast:/app/config/forecast:ro
+    environment:
+      <<: *runtime-env
+    command:
+      - python
+      - scripts/forecast/fetch_openmeteo_ecmwf.py
+      - --centroids
+      - config/forecast/amb_era5land_centroids.csv
+      - --stats
+      - data/processed/stats_config.npz
+      - --out-zarr
+      - data/forecast/openmeteo_ecmwf_lr.zarr
+      - --out-manifest
+      - data/forecast/openmeteo_ecmwf_manifest.json
+      - --forecast-days
+      - ${FORECAST_DAYS:-7}
+    restart: "no"
+
+  forecast-inference:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../data:/app/data
+      - ../experiments:/app/experiments
+    environment:
+      <<: *runtime-env
+      USE_GPU_CONFIG: "1"
+    deploy: *gpu
+    shm_size: 8gb
+    command:
+      - python
+      - scripts/forecast/run_operational_inference.py
+      - --forecast-zarr
+      - ${FORECAST_ZARR:-data/forecast/openmeteo_ecmwf_lr.zarr}
+      - --model-type
+      - ${FORECAST_MODEL_TYPE:-mamba}
+      - --model-path
+      - ${FORECAST_MODEL_PATH:-experiments/models/Tiles_MAMBA_S42_best.h5}
+      - --out-dir
+      - ${ALERT_PREDICTION_DIR:-experiments/predictions}
+      - --manifest
+      - ${ALERT_PREDICTION_DIR:-experiments/predictions}/manifest.csv
+      - --patch-size
+      - ${INFER_PATCH_SIZE:-96}
+      - --stride
+      - ${INFER_STRIDE:-48}
+      - --batch-size
+      - ${INFER_BATCH:-8}
+    restart: "no"
+
+  tiles-heatwave:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../data:/app/data
+      - ../experiments:/app/experiments
+    environment:
+      <<: *runtime-env
+      USE_GPU_CONFIG: "1"
+      MODELS: "${MODELS:-unet lstm transformer mamba}"
+      SEEDS: "${SEEDS:-42}"
+      EPOCHS: "${EPOCHS:-50}"
+      BATCH_SIZE: "${BATCH_SIZE:-8}"
+      PATCHES_PER_EPOCH: "${PATCHES_PER_EPOCH:-6000}"
+      VAL_PATCHES: "${VAL_PATCHES:-2400}"
+      EARLY_STOPPING_PATIENCE: "${EARLY_STOPPING_PATIENCE:-8}"
+      EARLY_STOPPING_START_EPOCH: "${EARLY_STOPPING_START_EPOCH:-4}"
+      EARLY_STOPPING_MIN_DELTA: "${EARLY_STOPPING_MIN_DELTA:-0.001}"
+      LR_PATIENCE: "${LR_PATIENCE:-3}"
+      LR_FACTOR: "${LR_FACTOR:-0.5}"
+      LR_MIN: "${LR_MIN:-1e-6}"
+      INFER_BATCH: "${INFER_BATCH:-32}"
+      STRIDE: "${STRIDE:-48}"
+      SAVE_MODEL_DIAGRAM: "0"
+      SAVE_VISUALIZATIONS: "0"
+      SAVE_COMPARATIVE_HISTORY: "0"
+    deploy: *gpu
+    shm_size: 8gb
+    command: bash scripts/ablation/run_ablation_tiles_heatwave_server.sh
+    restart: "no"
+
+  fullframe:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../data:/app/data
+      - ../experiments:/app/experiments
+    environment:
+      <<: *runtime-env
+      USE_GPU_CONFIG: "1"
+      FULLFRAME: "1"
+      SAVE_MODEL_DIAGRAM: "0"
+      SAVE_VISUALIZATIONS: "0"
+      SAVE_COMPARATIVE_HISTORY: "0"
+    deploy: *gpu
+    shm_size: 8gb
+    command: python scripts/ablation/run_ablation.py --models unet lstm transformer mamba --min-seq-len 6
+    restart: "no"
+
+  heatwave-alerts:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../data:/app/data
+      - ../experiments:/app/experiments
+    environment:
+      <<: *runtime-env
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      ALERT_NOTIFY_MIN_LEVEL: ${ALERT_NOTIFY_MIN_LEVEL:-warning}
+    command:
+      - python
+      - scripts/alerts/generate_heatwave_alerts.py
+      - --prediction-dir
+      - ${ALERT_PREDICTION_DIR:-experiments/predictions}
+      - --pattern
+      - ${ALERT_PATTERN:-*.npy}
+      - --derive-threshold-from-cache
+      - --out-dir
+      - ${ALERT_OUT_DIR:-experiments/alerts/latest}
+    restart: "no"
+
+  heatwave-alerts-live:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../data:/app/data
+      - ../experiments:/app/experiments
+    environment:
+      <<: *runtime-env
+    command:
+      - python
+      - scripts/alerts/watch_heatwave_alerts.py
+      - --prediction-dir
+      - ${ALERT_PREDICTION_DIR:-experiments/predictions}
+      - --pattern
+      - ${ALERT_PATTERN:-*.npy}
+      - --out-dir
+      - ${ALERT_OUT_DIR:-experiments/alerts/latest}
+      - --interval-seconds
+      - ${ALERT_INTERVAL_SECONDS:-30}
+      - --stable-seconds
+      - ${ALERT_STABLE_SECONDS:-10}
+      - --run-on-start
+    restart: unless-stopped
+
+  alert-dashboard:
+    image: ${WEATHER_IMAGE:-weather_urban_downscaling:tf}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.tf
+    volumes:
+      - ../experiments:/app/experiments
+      - ../frontend:/app/frontend:ro
+    environment:
+      <<: *runtime-env
+    ports:
+      - "${DASHBOARD_PORT:-8765}:8765"
+    command:
+      - python
+      - scripts/frontend/serve_alert_dashboard.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+    restart: unless-stopped

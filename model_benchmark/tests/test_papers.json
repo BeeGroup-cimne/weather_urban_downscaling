@@ -1,0 +1,51 @@
+{
+  "papers": [
+    {
+      "id": "paper_wind_gnn",
+      "title": "Urban wind field prediction based on sparse sensors and physics-informed graph-assisted auto-encoder",
+      "abstract": "The urban flow wind field is a critical element for downstream research, such as mitigation of urban wind disasters, assessment of urban wind environment, and urban drone route planning. However, it is impractical to arrange a large number of sensors to monitor an urban wind flow field. Hence, acquiring the entire urban wind flow field via sparse sensors would be highly valuable. To date, no scheme including deep learning (DL) model has been specifically designed for this purpose. This study presents an innovative approach to reconstruct complex high-resolution urban wind fields based on sparse sensors, using a physics-informed graph neural network (GNN)-assisted auto-encoder. The proposed method leverages the relationship between sensors and their surrounding environment enabled by deep mining capabilities of GNNs. As a result, the utilization and emphasis on sparse sensors data are significantly enhanced. The continuity equation of fluid flow is incorporated into the loss function of the convolution neural network to improve the stability and performance of the model. The findings suggest that, in contrast to prevalent generative DL models, the proposed model yields an approximate 50% reduction in root mean square error for reconstructing high-resolution urban wind fields for multiple wind attack angles.",
+      "known_claims": [
+        "GNN-assisted auto-encoder reconstructs urban wind fields from sparse sensors",
+        "Continuity equation incorporated into CNN loss function",
+        "50% reduction in RMSE vs generative DL models",
+        "First DL model specifically designed for sparse-to-dense urban wind field reconstruction",
+        "Model tested across multiple wind attack angles"
+      ],
+      "known_issues": [
+        "No mention of generalization to unseen urban geometries",
+        "No computational cost comparison with CFD baseline",
+        "Sensor placement strategy not discussed in abstract",
+        "Validation limited to synthetic or specific case study (unclear)"
+      ],
+      "key_relationships": [
+        "Relates to CFD surrogate modeling (Paper 1: Mamba/UNet)",
+        "Uses physics-informed approach similar to PINNs",
+        "GNN architecture complements transformer/SSM approaches"
+      ]
+    },
+    {
+      "id": "paper_lifetime_extremes",
+      "title": "Global emergence of unprecedented lifetime exposure to climate extremes",
+      "abstract": "Climate extremes are escalating under anthropogenic climate change. Yet, how this translates into unprecedented cumulative extreme event exposure in a person's lifetime remains unclear. Here we use climate models, impact models and demographic data to project the number of people experiencing cumulative lifetime exposure to climate extremes above the 99.99th percentile of exposure expected in a pre-industrial climate. We project that the birth cohort fraction facing this unprecedented lifetime exposure to heatwaves, crop failures, river floods, droughts, wildfires and tropical cyclones will at least double from 1960 to 2020 under current mitigation policies aligned with a global warming pathway reaching 2.7 C above pre-industrial temperatures by 2100. Under a 1.5 C pathway, 52% of people born in 2020 will experience unprecedented lifetime exposure to heatwaves. If global warming reaches 3.5 C by 2100, this fraction rises to 92% for heatwaves, 29% for crop failures and 14% for river floods. The chance of facing unprecedented lifetime exposure to heatwaves is substantially larger among population groups characterized by high socioeconomic vulnerabilities. Our results call for deep and sustained greenhouse gas emissions reductions to lower the burden of climate change on current young generations.",
+      "known_claims": [
+        "Birth cohort fraction facing unprecedented lifetime exposure will at least double from 1960 to 2020",
+        "Under 1.5C pathway, 52% of people born in 2020 will experience unprecedented heatwave exposure",
+        "Under 3.5C pathway, 92% face unprecedented heatwave exposure",
+        "Uses climate models, impact models, and demographic data",
+        "Threshold defined as 99.99th percentile of pre-industrial exposure",
+        "Socioeconomic vulnerability correlates with higher exposure risk"
+      ],
+      "known_issues": [
+        "99.99th percentile threshold is arbitrary without sensitivity analysis",
+        "Demographic projections have inherent uncertainty not fully addressed",
+        "Climate model ensemble size not specified in abstract",
+        "Correlation vs causation on socioeconomic vulnerability"
+      ],
+      "key_relationships": [
+        "Provides climate context for urban microclimate research",
+        "Links to downscaling needs (Paper 1: weather_urban_downscaling)",
+        "Relevant for ACME Review climate impact framing"
+      ]
+    }
+  ]
+}

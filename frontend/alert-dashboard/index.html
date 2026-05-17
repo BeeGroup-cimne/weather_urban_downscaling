@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AMB Heat Alerts</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="status-band" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Barcelona Metropolitan Area</p>
+          <h1 id="page-title">Heat Alert Monitor</h1>
+          <p id="latest-time" class="muted">Loading latest forecast...</p>
+        </div>
+        <div id="level-pill" class="level-pill level-normal">Normal</div>
+      </section>
+
+      <section class="metrics-grid" aria-label="Current alert metrics">
+        <article class="metric">
+          <span>Maximum predicted</span>
+          <strong id="max-pred">--</strong>
+        </article>
+        <article class="metric">
+          <span>Mean predicted</span>
+          <strong id="mean-pred">--</strong>
+        </article>
+        <article class="metric">
+          <span>Affected area</span>
+          <strong id="affected-area">--</strong>
+        </article>
+        <article class="metric">
+          <span>Active event</span>
+          <strong id="active-event">--</strong>
+        </article>
+      </section>
+
+      <section class="map-section" aria-labelledby="map-title">
+        <div class="section-head">
+          <div>
+            <h2 id="map-title">Latest Temperature Field</h2>
+            <p id="map-range" class="muted">Predicted air temperature in degrees Celsius.</p>
+          </div>
+          <div class="toggle-group" aria-label="Map layer">
+            <button id="prediction-btn" class="toggle active" type="button">Prediction</button>
+            <button id="exceedance-btn" class="toggle" type="button">Exceedance</button>
+          </div>
+        </div>
+        <div class="map-wrap">
+          <div class="map-frame">
+            <canvas id="map-canvas" width="160" height="160" aria-label="Heat map"></canvas>
+            <canvas id="overlay-canvas" width="160" height="160" aria-hidden="true"></canvas>
+            <div class="map-label north">N</div>
+            <div id="map-tooltip" class="map-tooltip" hidden></div>
+          </div>
+          <div class="legend" aria-hidden="true">
+            <span id="legend-min">--</span>
+            <div class="legend-bar"></div>
+            <span id="legend-max">--</span>
+          </div>
+        </div>
+        <div id="geo-caption" class="geo-caption">Grid bounds loading...</div>
+      </section>
+
+      <section class="chart-section" aria-labelledby="chart-title">
+        <div class="section-head">
+          <div>
+            <h2 id="chart-title">Hourly Forecast</h2>
+            <p class="muted">Mean and maximum predicted temperature across the AMB grid.</p>
+          </div>
+          <button id="refresh-btn" class="refresh" type="button">Refresh</button>
+        </div>
+        <canvas id="hourly-chart" width="900" height="260" aria-label="Hourly temperature chart"></canvas>
+      </section>
+
+      <section class="table-section" aria-labelledby="events-title">
+        <div>
+          <h2 id="events-title">Detected Events</h2>
+          <p id="event-summary" class="muted">No active heatwave event.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Start</th>
+                <th>End</th>
+                <th>Duration</th>
+                <th>Peak level</th>
+                <th>Peak area</th>
+              </tr>
+            </thead>
+            <tbody id="events-body">
+              <tr><td colspan="5">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

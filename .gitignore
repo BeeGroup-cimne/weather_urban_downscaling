@@ -151,3 +151,19 @@ Paper/
 # ----- Figure authoring intermediates -----
 figures/final_all_images/authoring/
 figures/final_all_images/candidates_flow/
+
+# ----- Forecast data (large, regenerable from OpenMeteo) -----
+data/forecast/
+
+# ----- IDE (Warp) -----
+.warp/
+
+# ----- Local evaluation reports (not for public repo) -----
+EVALUACION_CR_BCN.md
+evaluacion_adversaria_CR_BCN.md
+
+# ----- Benchmark results (regenerable run outputs) -----
+model_benchmark/results/
+
+# ----- Diagnostic / one-off investigation scripts -----
+scripts/diagnostics/
