@@ -569,5 +569,131 @@ class ModelZoo:
         # Salida Final
         output = layers.TimeDistributed(layers.Conv2D(1, (1, 1), activation='linear'))(x)
 
-        return Model(inputs=[lr_input, static_input], outputs=output, name="Hybrid_UNet_Mamba")    
-        
+        return Model(inputs=[lr_input, static_input], outputs=output, name="Hybrid_UNet_Mamba")
+
+    @staticmethod
+    def build_hybrid_unet_mamba_v2(lr_shape=(5, 9), hr_shape=(251, 251)):
+        """
+        Mamba UNet con Static Skip Connections directas al decoder.
+
+        Diferencia vs v1: añade un pathway paralelo que procesa las features
+        estáticas de morfología urbana (building_density, svf, etc.) a 3
+        resoluciones y las inyecta en cada etapa del decoder, bypassing el
+        bottleneck de Mamba. Esto garantiza un gradiente limpio desde la
+        morfología urbana hasta la salida, solucionando el bajo R² (0.009)
+        con building_density que tiene v1 frente a ConvLSTM (R²=0.178).
+
+        Checkpoints de v1 no son compatibles: esta función genera un modelo
+        nuevo con nombre "Hybrid_UNet_Mamba_v2".
+        """
+        from config.runtime import Config
+
+        # --- Inputs ---
+        lr_input = Input(
+            shape=(Config.SEQ_LEN, lr_shape[0], lr_shape[1], Config.CHANNELS),
+            name="lr_input"
+        )
+        static_input = Input(
+            shape=(Config.SEQ_LEN, hr_shape[0], hr_shape[1], Config.STATIC_CHANNELS),
+            name="static_input"
+        )
+
+        # --- Pre-procesado: upscale LR + early fusion (igual que v1) ---
+        x_lr = ModelZoo._maybe_gaussian_noise(lr_input)
+        x_lr_up = layers.TimeDistributed(
+            layers.Resizing(hr_shape[0], hr_shape[1], interpolation='bilinear')
+        )(x_lr)
+        x = layers.Concatenate(axis=-1)([x_lr_up, static_input])
+
+        reg = ModelZoo._l2()
+
+        # --- STATIC PARALLEL PATHWAY ---
+        # Pathway independiente que lleva las features morfológicas directamente
+        # al decoder sin pasar por el aplanamiento 1D del bottleneck de Mamba.
+        # Tres niveles de resolución para que coincidan con los skips del decoder.
+
+        # Nivel 0: 251x251 → 16 canales
+        st0 = layers.TimeDistributed(
+            layers.Conv2D(16, (3, 3), padding='same', activation='relu', kernel_regularizer=reg),
+            name="static_conv_s0"
+        )(static_input)
+
+        # Nivel 1: ~125x125 → 32 canales
+        st1 = layers.TimeDistributed(layers.AveragePooling2D((2, 2)), name="static_pool_s1")(st0)
+        st1 = layers.TimeDistributed(
+            layers.Conv2D(32, (3, 3), padding='same', activation='relu', kernel_regularizer=reg),
+            name="static_conv_s1"
+        )(st1)
+
+        # Nivel 2: ~62x62 → 64 canales
+        st2 = layers.TimeDistributed(layers.AveragePooling2D((2, 2)), name="static_pool_s2")(st1)
+        st2 = layers.TimeDistributed(
+            layers.Conv2D(64, (3, 3), padding='same', activation='relu', kernel_regularizer=reg),
+            name="static_conv_s2"
+        )(st2)
+
+        # --- ENCODER (igual que v1) ---
+        skips = []
+
+        # Block 1 (251x251 → 125x125)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        skips.append(x)
+        x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x)
+
+        # Block 2 (125x125 → 62x62)
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        skips.append(x)
+        x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x)
+
+        # Block 3 (62x62 → 31x31)
+        x = layers.TimeDistributed(layers.Conv2D(128, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        skips.append(x)
+        x = layers.TimeDistributed(layers.MaxPooling2D((2, 2)))(x)
+
+        # --- MAMBA BOTTLENECK (igual que v1) ---
+        h_enc, w_enc, c_enc = x.shape[2], x.shape[3], x.shape[4]
+
+        x_flat = layers.Reshape((-1, c_enc))(x)
+        x_mamba = SimpleMambaBlock(model_dim=c_enc, expand=2)(x_flat)
+        x_mamba = SimpleMambaBlock(model_dim=c_enc, expand=2)(x_mamba)
+        x = layers.Reshape((Config.SEQ_LEN, h_enc, w_enc, c_enc))(x_mamba)
+
+        # --- DECODER con STATIC SKIP CONNECTIONS ---
+        # En cada etapa del decoder concatenamos el static pathway correspondiente
+        # junto con el skip del encoder. Esto da al modelo una ruta de gradiente
+        # directa desde la morfología hasta la salida, sin pasar por Mamba.
+
+        # Up 3: 31x31 → 62x62  [skip canal: 128 + 128 + 64 = 320]
+        x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
+        x = layers.TimeDistributed(layers.Conv2D(128, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        x = layers.TimeDistributed(layers.Resizing(skips[2].shape[2], skips[2].shape[3]))(x)
+        st2_r = layers.TimeDistributed(
+            layers.Resizing(skips[2].shape[2], skips[2].shape[3]), name="st2_resize"
+        )(st2)
+        x = layers.Concatenate()([x, skips[2], st2_r])
+
+        # Up 2: 62x62 → 125x125  [skip canal: 64 + 64 + 32 = 160]
+        x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
+        x = layers.TimeDistributed(layers.Conv2D(64, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        x = layers.TimeDistributed(layers.Resizing(skips[1].shape[2], skips[1].shape[3]))(x)
+        st1_r = layers.TimeDistributed(
+            layers.Resizing(skips[1].shape[2], skips[1].shape[3]), name="st1_resize"
+        )(st1)
+        x = layers.Concatenate()([x, skips[1], st1_r])
+
+        # Up 1: 125x125 → 251x251  [skip canal: 32 + 32 + 16 = 80]
+        x = layers.TimeDistributed(layers.UpSampling2D((2, 2)))(x)
+        x = layers.TimeDistributed(layers.Conv2D(32, (3, 3), padding='same', activation='relu', kernel_regularizer=reg))(x)
+        x = layers.TimeDistributed(layers.Resizing(skips[0].shape[2], skips[0].shape[3]))(x)
+        st0_r = layers.TimeDistributed(
+            layers.Resizing(skips[0].shape[2], skips[0].shape[3]), name="st0_resize"
+        )(st0)
+        x = layers.Concatenate()([x, skips[0], st0_r])
+
+        # Salida Final
+        output = layers.TimeDistributed(layers.Conv2D(1, (1, 1), activation='linear'))(x)
+
+        return Model(inputs=[lr_input, static_input], outputs=output, name="Hybrid_UNet_Mamba_v2")
+
