@@ -11,7 +11,6 @@ services:
     image: weather_thesis:tf
     container_name: weather_tf_tiles_heatwave
     volumes:
-      - ./:/app
       - ../data:/app/data
       - ../experiments:/app/experiments
     environment:
@@ -49,5 +48,5 @@ services:
               count: 1
               capabilities: [ gpu ]
     shm_size: '8gb'
-    command: bash scripts/run_ablation_tiles_heatwave_server.sh
+    command: bash scripts/ablation/run_ablation_tiles_heatwave_server.sh
     restart: "no"

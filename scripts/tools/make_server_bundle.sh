@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Crea un tarball listo para "subir a servidor" sin imágenes, modelos entrenados ni outputs de experiments.
-# Incluye la estructura (via .gitkeep) y el código necesario para ejecutar scripts/run_ablation.py.
+# Incluye la estructura (via .gitkeep) y el codigo necesario para ejecutar scripts/ablation/run_ablation.py.
 
 out="${1:-dist/weather_urban_downscaling_server_bundle.tar.gz}"
 root_name="weather_urban_downscaling"

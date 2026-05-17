@@ -33,5 +33,5 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [ gpu ]
-    command: python scripts/run_ablation.py --models unet lstm transformer mamba --min-seq-len 6
+    command: python scripts/ablation/run_ablation.py --models unet lstm transformer mamba --min-seq-len 6
     restart: "no"

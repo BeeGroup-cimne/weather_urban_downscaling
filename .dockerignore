@@ -64,8 +64,6 @@ src/utils/cache/
 # Redundant requirements
 requirements.txt
 requirements_mac.txt
-requirements_mamba.txt
-requirements_torch.txt
 environment_torch.yml
 
 # Non-production scripts (figure generators, tiles, etc.)

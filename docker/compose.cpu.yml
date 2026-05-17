@@ -4,44 +4,44 @@ services:
   # TensorFlow Trainer (CPU only)
   tf-trainer:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_tf_trainer
     volumes:
-      - ./data:/app/data
-      - ./experiments:/app/experiments
+      - ../data:/app/data
+      - ../experiments:/app/experiments
     environment:
       - TF_USE_LEGACY_KERAS=1
       - PYTHONUNBUFFERED=1
     # Sin GPU - CPU only
-    command: python scripts/run_ablation.py
+    command: python scripts/ablation/run_ablation.py
     restart: "no"
 
   # PyTorch Trainer (CPU only)
   torch-trainer:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.torch
     image: weather_thesis:torch
     container_name: weather_torch_trainer
     volumes:
-      - ./data:/app/data
-      - ./experiments:/app/experiments
+      - ../data:/app/data
+      - ../experiments:/app/experiments
     environment:
       - PYTHONUNBUFFERED=1
-    command: python scripts/train_torch.py
+    command: python scripts/training/train_torch.py
     restart: "no"
 
   # Data Preprocessing
   data-prep:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_data_prep
     volumes:
-      - ./data:/app/data
+      - ../data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
     command: >

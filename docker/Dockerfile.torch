@@ -31,7 +31,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY config/ ./config/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
-COPY train.py .
 
 # Environment variables
 ENV PYTHONPATH="${PYTHONPATH}:/app"
@@ -45,4 +44,4 @@ RUN mkdir -p /app/data/processed/era5land \
     /app/experiments/figures
 
 # Default command
-CMD ["python", "scripts/train_torch.py"]
+CMD ["python", "scripts/training/train_torch.py"]

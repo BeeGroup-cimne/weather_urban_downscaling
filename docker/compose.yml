@@ -27,7 +27,7 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    command: python scripts/run_ablation.py
+    command: python scripts/ablation/run_ablation.py
     restart: "no"
 
   # =============================================================
@@ -53,7 +53,7 @@ services:
   #           - driver: nvidia
   #             count: 1
   #             capabilities: [gpu]
-  #   command: python scripts/train_torch.py
+  #   command: python scripts/training/train_torch.py
   #   restart: "no"
 
   # =============================================================

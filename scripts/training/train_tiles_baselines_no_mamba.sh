@@ -4,7 +4,7 @@ set -euo pipefail
 # Train only baseline models (UNet, UNet+LSTM, Transformer) with the same
 # tile setup used for fair comparison against an already-trained Mamba.
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 export SAVE_MODEL_DIAGRAM="${SAVE_MODEL_DIAGRAM:-0}"
 export SAVE_VISUALIZATIONS="${SAVE_VISUALIZATIONS:-0}"
@@ -24,7 +24,7 @@ EARLY_STOPPING_PATIENCE="${EARLY_STOPPING_PATIENCE:-12}"
 EARLY_STOPPING_START_EPOCH="${EARLY_STOPPING_START_EPOCH:-8}"
 LR_PATIENCE="${LR_PATIENCE:-4}"
 
-caffeinate -dimsu "${PYTHON_BIN}" scripts/run_ablation_tiles.py \
+caffeinate -dimsu "${PYTHON_BIN}" scripts/ablation/run_ablation_tiles.py \
   --models unet lstm transformer \
   --seq-len "${SEQ_LEN}" \
   --patch-size "${PATCH_SIZE}" \

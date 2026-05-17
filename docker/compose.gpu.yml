@@ -75,7 +75,7 @@ services:
               capabilities: [ gpu ]
     shm_size: '8gb'
     command: >
-      python scripts/train_transformer.py
+      python scripts/training/train_transformer.py
     restart: "no"
     profiles:
       - training
@@ -111,7 +111,7 @@ services:
               capabilities: [ gpu ]
     shm_size: '16gb' # Más shared memory para Mamba
     command: >
-      python scripts/torch_gpu_train.py
+      python scripts/training/torch_gpu_train.py
     restart: "no"
     profiles:
       - training

@@ -3,18 +3,16 @@ version: '3.8'
 services:
   tf-figures:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.tf
     image: weather_thesis:tf
     container_name: weather_tf_figures
     volumes:
-      - ./:/app
-      - ./data:/app/data
-      - ./experiments:/app/experiments
+      - ../:/app
     environment:
       - TF_USE_LEGACY_KERAS=1
       - PYTHONUNBUFFERED=1
       - MPLBACKEND=Agg
       - CUDA_VISIBLE_DEVICES=""
-    command: python scripts/generate_presentation_figures.py
+    command: python scripts/figures/generate_presentation_figures.py
     restart: "no"
