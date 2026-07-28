@@ -1,5 +1,22 @@
 # Weather Urban Downscaling
 
+> ## ⚠️ Legacy repository — frozen
+>
+> This repository is **v1 of Paper 1** and is no longer developed. It is kept
+> read-only as the reproducibility record of the *Urban Climate* submission
+> (rejected). Do not open issues or PRs here; do not build new work on this code.
+>
+> Active work lives elsewhere — see **[MOVED.md](MOVED.md)** for the full map:
+>
+> | What | Where |
+> |---|---|
+> | Paper 1 v2 (PyTorch, targeting *Computational Urban Science*) | separate active repository |
+> | LaTeX manuscript & submission package (was `Paper/`) | `paper1_urban_climate` |
+> | Future research lines & thesis planning (was `future_projects/`) | `research_roadmap` |
+> | ASIM 2026 conference line (was `future_projects/Asim_2026/`) | `asim2026` |
+>
+> Frozen at tag `paper1-v1-legacy`.
+
 **Physics-Aware Spatiotemporal Downscaling of Urban Microclimates using Vision Mamba (U-Net + SSM)**
 
 Reproducibility code for benchmarking recurrent and state-space architectures for hourly urban air-temperature downscaling over the Barcelona Metropolitan Area. The repository benchmarks Vision Mamba (Selective State Space Models) against ConvLSTM, Transformer, U-Net, and deterministic interpolation baselines for 100-m temperature field reconstruction from ERA5-Land forcings and static urban morphology.
