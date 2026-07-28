@@ -165,5 +165,9 @@ evaluacion_adversaria_CR_BCN.md
 # ----- Benchmark results (regenerable run outputs) -----
 model_benchmark/results/
 
+# Local benchmark config: holds an OpenRouter API key.
+# Create it with `cp config.json.example config.json` (see model_benchmark/README.md).
+model_benchmark/config.json
+
 # ----- Diagnostic / one-off investigation scripts -----
 scripts/diagnostics/
