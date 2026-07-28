@@ -47,6 +47,10 @@ class Config:
     STATS_PATH = str(BASE_DIR / "data" / "processed" / "stats_config.npz")
     STATIC_CACHE_PATH = str(BASE_DIR / "data" / "processed" / "static_processed.npy")
 
+    # Climatological anomaly channel (optional, appended to static features at train time)
+    # Set to an empty string "" to disable.
+    CLIM_ANOMALY_PATH = str(BASE_DIR / "data" / "processed" / "clim_anomaly_full.npy")
+
     # Esquema de variables estáticas.
     # - "legacy": mantiene orden histórico para compatibilidad de checkpoints.
     # - "v2": versión mejorada (menos redundante y con variables morfológicas nuevas).

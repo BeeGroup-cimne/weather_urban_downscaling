@@ -50,6 +50,25 @@ class TileDataPipeline:
         if np.isnan(self.static_norm).any():
             self.static_norm = np.nan_to_num(self.static_norm, nan=0.0, posinf=0.0, neginf=0.0)
 
+        # --- Canal climatológico opcional ---
+        clim_path = getattr(self.cfg, "CLIM_ANOMALY_PATH", "")
+        if clim_path and os.path.isfile(clim_path):
+            clim = np.load(clim_path).astype("float32")
+            if clim.ndim == 2:
+                clim = clim[..., np.newaxis]
+            if clim.shape[:2] == self.static_norm.shape[:2]:
+                # Normalize clim with its own stats
+                c_mean = np.mean(clim)
+                c_std = np.std(clim) + 1e-6
+                clim_norm = (clim - c_mean) / c_std
+                self.static_norm = np.concatenate([self.static_norm, clim_norm], axis=-1)
+                if self.static_raw is not None:
+                    self.static_raw = np.concatenate([self.static_raw, clim], axis=-1)
+                print(f"   🌡️ [tiles] Canal climatológico añadido: {clim_path} → static_channels={self.static_norm.shape[-1]}")
+            else:
+                print(f"   ⚠️ [tiles] CLIM shape {clim.shape[:2]} != static {self.static_norm.shape[:2]}, skipping.")
+        # ------------------------------------
+
         # Prefer metadata written with static cache; fallback to schema selection from zarr.
         meta = read_static_cache_meta(self.static_cache_path)
         if meta and isinstance(meta.get("feature_names"), list):

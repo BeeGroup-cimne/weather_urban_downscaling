@@ -787,6 +787,20 @@ class BigDataPipeline:
         # Asegurar forma (H, W, Chan)
         if static_data.ndim == 2:
              static_data = static_data[..., np.newaxis]
+
+        # --- Canal climatológico opcional ---
+        clim_path = getattr(self.cfg, "CLIM_ANOMALY_PATH", "")
+        if clim_path and os.path.isfile(clim_path):
+            clim = np.load(clim_path).astype("float32")
+            if clim.ndim == 2:
+                clim = clim[..., np.newaxis]
+            if clim.shape[:2] != static_data.shape[:2]:
+                print(f"   ⚠️ CLIM shape {clim.shape[:2]} != static {static_data.shape[:2]}, skipping.")
+            else:
+                static_data = np.concatenate([static_data, clim], axis=-1)
+                self.cfg.STATIC_CHANNELS = int(static_data.shape[-1])
+                print(f"   🌡️ Canal climatológico añadido: {clim_path} → static_channels={static_data.shape[-1]}")
+        # ------------------------------------
              
         mean_st = np.mean(static_data, axis=(0, 1), keepdims=True)
         std_st = np.std(static_data, axis=(0, 1), keepdims=True)
